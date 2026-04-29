@@ -1,0 +1,22 @@
+[
+  {
+    "query": "is there any amount in -ve in transaction?",
+    "sql": "SELECT sales_amount FROM transactions WHERE sales_amount < 0;"
+  },
+  {
+    "query": "show me the negative transaction amounts",
+    "sql": "SELECT * FROM transactions WHERE sales_amount < 0;"
+  },
+  {
+    "query": "what are the most popular items by total sales amount?",
+    "sql": "SELECT product_id, SUM(sales_amount) as total_revenue FROM transactions GROUP BY product_id ORDER BY total_revenue DESC LIMIT 5;"
+  },
+  {
+    "query": "unique vs non unique customers year-wise",
+    "sql": "SELECT activity_year, SUM(CASE WHEN is_unique THEN 1 ELSE 0 END) as unique_customers, SUM(CASE WHEN NOT is_unique THEN 1 ELSE 0 END) as returning_customers FROM customer_data GROUP BY activity_year;"
+  },
+  {
+    "query": "detail of highest profit margin and highest Margin Contribution customer each year",
+    "sql": "WITH RankedSales AS (SELECT YEAR(order_date) AS order_year, customer_code, SUM(sales_amount - cost_price) AS profit_margin, SUM((sales_amount - cost_price) * sales_qty) AS margin_contribution, MAX(currency) as currency, SUM(SUM((sales_amount - cost_price) * sales_qty)) OVER(PARTITION BY YEAR(order_date)) AS yearly_total_contribution, ROW_NUMBER() OVER(PARTITION BY YEAR(order_date) ORDER BY SUM(sales_amount - cost_price) DESC) as rank_margin, ROW_NUMBER() OVER(PARTITION BY YEAR(order_date) ORDER BY SUM((sales_amount - cost_price) * sales_qty) DESC) as rank_contribution FROM transactions GROUP BY YEAR(order_date), customer_code) SELECT r.order_year, MAX(CASE WHEN r.rank_margin = 1 THEN c.custmer_name END) AS top_margin_customer, MAX(CASE WHEN r.rank_margin = 1 THEN r.profit_margin END) AS max_profit_margin, MAX(CASE WHEN r.rank_contribution = 1 THEN c.custmer_name END) AS top_contribution_customer, MAX(CASE WHEN r.rank_contribution = 1 THEN r.margin_contribution END) AS max_profit_contribution, MAX(CASE WHEN r.rank_contribution = 1 THEN (r.margin_contribution * 100.0) / NULLIF(r.yearly_total_contribution, 0) END) AS contribution_pct_of_year, MAX(r.currency) as currency FROM RankedSales r JOIN customers c ON r.customer_code = c.customer_code GROUP BY r.order_year ORDER BY r.order_year;"
+  }
+]

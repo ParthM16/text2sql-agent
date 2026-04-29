@@ -1,0 +1,38 @@
+[
+  {
+    "question": "show me the total sales amount",
+    "gold_sql": "SELECT SUM(sales_amount) FROM transactions",
+    "difficulty": "easy",
+    "category": "aggregation"
+  },
+  {
+    "question": "how many unique customers do we have?",
+    "gold_sql": "SELECT COUNT(DISTINCT customer_code) FROM customers",
+    "difficulty": "easy",
+    "category": "simple"
+  },
+  {
+    "question": "what is the total sales quantity for product Prod001?",
+    "gold_sql": "SELECT SUM(sales_qty) FROM transactions WHERE product_code = 'Prod001'",
+    "difficulty": "easy",
+    "category": "filtering"
+  },
+  {
+    "question": "show me the total sales amount year wise",
+    "gold_sql": "SELECT YEAR(order_date) AS sales_year, SUM(sales_amount) AS total_sales FROM transactions GROUP BY YEAR(order_date)",
+    "difficulty": "medium",
+    "category": "grouping_clean_aggregation"
+  },
+  {
+    "question": "what is the profit margin contribution for market code Mark001?",
+    "gold_sql": "SELECT SUM((sales_amount - cost_price) * sales_qty) FROM transactions WHERE market_code = 'Mark001'",
+    "difficulty": "medium",
+    "category": "domain_logic"
+  },
+  {
+    "question": "unique vs returning customers year-wise",
+    "gold_sql": "WITH CustomerFirstYear AS (SELECT customer_code, MIN(YEAR(order_date)) as first_year FROM transactions GROUP BY customer_code), YearlyCustomers AS (SELECT YEAR(t.order_date) as order_year, t.customer_code, MAX(cfy.first_year) as first_year FROM transactions t JOIN CustomerFirstYear cfy ON t.customer_code = cfy.customer_code GROUP BY YEAR(t.order_date), t.customer_code) SELECT order_year, SUM(CASE WHEN first_year = order_year THEN 1 ELSE 0 END) as unique_customers, SUM(CASE WHEN first_year < order_year THEN 1 ELSE 0 END) as returning_customers FROM YearlyCustomers GROUP BY order_year",
+    "difficulty": "hard",
+    "category": "domain_logic_complex"
+  }
+]

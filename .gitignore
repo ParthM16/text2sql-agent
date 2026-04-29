@@ -1,0 +1,49 @@
+# ─── Python ───────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ─── Virtual Environment ─────────────────────────
+venv/
+.venv/
+
+# ─── Secrets (NEVER commit) ──────────────────────
+.env
+service_account.json
+
+# ─── IDE / OS ──────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# ─── Runtime Data (user-specific) ─────────────────
+data/*.csv
+data/*.xlsx
+data/*.xls
+data/cache/
+data/query_history.json
+data/schema_knowledge.json
+!data/few_shot_examples.json
+!data/eval_set.json
+!data/.gitkeep
+
+# ─── ML Model Weights (auto-downloaded) ──────────
+models/
+
+# ─── Logs ────────────────────────────────────────
+logs/
+!logs/.gitkeep
+
+# ─── Documentation (internal only) ───────────────
+docs/
+
+# ─── Exports & Scratch ──────────────────────────
+export/
+scratch/
+tests/
+export_project.py

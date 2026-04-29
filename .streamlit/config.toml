@@ -1,0 +1,7 @@
+[server]
+fileWatcherType = "none"
+maxUploadSize = 10
+
+[client]
+# PROD LEVEL: Hides massive scary stack traces from end-users!
+showErrorDetails = false
