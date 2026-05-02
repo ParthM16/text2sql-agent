@@ -1,5 +1,17 @@
 # 🤖 Text-to-SQL AI Agent: Talk to Your Database in Plain English
 
+## 📑 Table of Contents
+
+* [What We Built](#what-we-built)
+* [Who Is This For?](#who-is-this-for)
+* [Whose Time Does It Save?](#whose-time-does-it-save)
+* [What We Achieved](#what-we-achieved)
+* [The Challenges & How We Overcame Them](#the-challenges--how-we-overcame-them)
+* [The Tech Stack (Under the Hood)](#the-tech-stack-under-the-hood)
+* [Architecture](#architecture)
+* [How to Run Locally](#how-to-run-locally)
+* [Project Structure](#project-structure)
+
 ## 🎯 What We Built
 In most businesses, data is locked behind a wall called **SQL**. When business users (marketing, sales, executives) have a question, they have to file a ticket with the data team and wait-sometimes for hours or days-just to get a simple answer.
 
