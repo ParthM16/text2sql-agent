@@ -1,11 +1,45 @@
 # 🤖 Text-to-SQL AI Agent: Talk to Your Database in Plain English
 
+<table>
+<tr>
+<td width="70%">
+
+## 📑 Table of Contents
+
+* [🎯 What We Built](#-what-we-built)
+* [👥 Who Is This For?](#-who-is-this-for)
+* [⏱️ Whose Time Does It Save?](#%EF%B8%8F-whose-time-does-it-save)
+* [🏆 What We Achieved](#-what-we-achieved)
+* [🚧 The Challenges & How We Overcame Them](#-the-challenges--how-we-overcame-them)
+* [🛠️ The Tech Stack (Under the Hood)](#%EF%B8%8F-the-tech-stack-under-the-hood)
+* [📐 Architecture](#-architecture)
+* [🚀 How to Run Locally](#-how-to-run-locally)
+* [📁 Project Structure](#-project-structure)
+
 ## 🎯 What We Built
 In most businesses, data is locked behind a wall called **SQL**. When business users (marketing, sales, executives) have a question, they have to file a ticket with the data team and wait-sometimes for hours or days-just to get a simple answer.
 
 This project tears down that wall. 
 
 I built an **AI Agent** that allows anyone to ask questions about their business in plain English. The agent understands the intent, writes the database query, executes it, and returns a formatted human-readable answer with charts-in under few seconds.
+
+</td>
+<td width="30%" align="center">
+
+<!-- 
+INSTRUCTIONS TO ADD YOUR VERTICAL VIDEO:
+1. Open this README.md on GitHub.com and click the "Edit" (pencil) icon.
+2. Drag and drop your .mp4 video file right here into this space. 
+3. GitHub will automatically upload it and generate a video link that looks like this:
+   https://github.com/user-attachments/assets/xxxx-xxxx-xxxx
+4. It will render perfectly in a vertical format on the right side!
+-->
+
+**[▶️ DRAG & DROP YOUR VIDEO .MP4 FILE HERE IN GITHUB EDITOR]**
+
+</td>
+</tr>
+</table>
 
 ## 👥 Who Is This For?
 

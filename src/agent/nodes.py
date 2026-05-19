@@ -16,7 +16,7 @@ from src.utils.logger import get_logger
 class AgentNodes:
     """Encapsulates all LLM-backed reasoning nodes used by the agent."""
 
-    def __init__(self, model_name: str = "gemini-2.5-pro"):
+    def __init__(self, model_name: str = "gemini-2.5-flash"):
         project_id = os.getenv("PROJECT_ID", "")
         location = os.getenv("LOCATION", "us-central1")
         api_key = os.getenv("GOOGLE_API_KEY", "")
@@ -373,6 +373,7 @@ class AgentNodes:
 
         Important instructions for the response:
         - Provide the exact information requested by the user. 
+        - If the user asked for a specific number of items (e.g., 'top 5') but the database returned fewer rows, EXPLICITLY mention that these are the only available records that match their criteria.
         - If a CAUTION block is provided above, you MUST lead your answer with it and EXPLICITLY mention BOTH the conversion rate used AND the source of that information (e.g. "1 [Unit A] = [Factor] [Unit B], Source: [Source Name]") in the very first sentence.
         - If returning a single record or tabular data, FORMAT IT BEAUTIFULLY using Markdown formatting. 
         - Start with a direct human-friendly statement summarizing the main finding.

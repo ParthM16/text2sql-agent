@@ -93,7 +93,7 @@ SUPPORTED_LANGUAGES = {
 
 col1, col2 = st.columns([8, 2])
 with col1:
-    st.markdown("<h1 class='main-header'><span class='header-anchor'></span>🛒 Retail Insights Agent</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'><span class='header-anchor'></span>Insights Agent</h1>", unsafe_allow_html=True)
 with col2:
     selected_lang_name = st.selectbox("🌐 Language", list(SUPPORTED_LANGUAGES.keys()), index=0)
     if "app_language" not in st.session_state or st.session_state.app_language != SUPPORTED_LANGUAGES[selected_lang_name]:

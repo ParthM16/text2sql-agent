@@ -2,6 +2,17 @@
 
 All notable changes to the Retail Insights Agent.
 
+## [May 18, 2026] - Security Guardrail Hardening
+
+### Added
+- **Explicit Abbreviation Expansion**: Added a dictionary check (`TBL -> TABLE`, `DB -> DATABASE`) to the Input Guardrail before spell correction to prevent users from bypassing security checks using common database shorthand.
+- **Execution Loop Security Abort**: Added a short-circuit inside the Node 6 Self-Healing loop that instantly aborts retries if the database returns a "forbidden operation" error. This prevents the LLM from aggressively trying to "fix" malicious queries.
+
+### Changed
+- **Telegraphic Query Bypass**: Relaxed the natural language `langdetect` guardrail. Increased the maximum word threshold from 4 words to 8 words, allowing valid telegraphic database queries (e.g., "unique product types in 2019") to cleanly bypass strict language mismatch checks.
+
+---
+
 ## [April 29, 2026] - Synchronous Execution & Pipeline Cleanup
 
 ### Changed

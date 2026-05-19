@@ -117,6 +117,17 @@ class TextToSQLAgent:
         import difflib
         
         # --- Targeted Pre-AI Spell Correction ---
+        # Expand common DB abbreviations that bypass regexes
+        abbreviations = {"TBL": "TABLE", "DB": "DATABASE", "DBS": "DATABASES", "PROC": "PROCEDURE"}
+        expanded_words = []
+        for w in trimmed.split():
+            clean_w = ''.join(c for c in w if c.isalnum()).upper()
+            if clean_w in abbreviations:
+                expanded_words.append(abbreviations[clean_w])
+            else:
+                expanded_words.append(w)
+        trimmed = " ".join(expanded_words)
+        
         # Only correct words close to dangerous keywords so we don't break domain names (like 'walmart' -> 'walnut')
         critical_keywords = [
             "DROP", "TABLE", "TABLES", "DATABASE", "DATABASES", "VIEW", "VIEWS",
@@ -170,27 +181,112 @@ class TextToSQLAgent:
             node_timings["00_input_guardrail"] = duration
             return "Security Policy Violation: Machine understanding languages (Binary, Hexadecimal, Base64) are not allowed. Please use human-readable natural language.", log, None, None
 
-        # 1.5 Natural Language Detection & Decimal Bypass Catch
+        # 1.5 Natural Language Detection — Multi-Signal Confidence Strategy
+        #
+        # WHY NOT a plain detect() call:
+        #   langdetect uses character n-gram statistics trained on prose. Short, technical,
+        #   SQL-domain queries (e.g. "unique product types in 2019") contain Latin-root words
+        #   that statistically resemble French/Spanish, producing frequent false positives
+        #   regardless of the word-count threshold used.
+        #
+        # STRATEGY (3 layers, fail-safe order):
+        #   1. Script/charset gate  — block non-Latin scripts immediately when app_language
+        #      is a Latin-script language. This catches Cyrillic, Arabic, CJK, etc. with
+        #      zero false positives and no ML inference needed.
+        #   2. Domain-token stripping — remove numbers, years, quoted strings, and known
+        #      SQL/BI domain words before handing the remainder to langdetect, so the
+        #      library judges only genuine linguistic signal.
+        #   3. Confidence threshold — only block when (a) enough non-domain words remain
+        #      to produce a reliable signal (MIN_LINGUISTIC_WORDS), AND (b) langdetect's
+        #      top detected language is NOT the expected language with HIGH confidence
+        #      (BLOCK_CONFIDENCE), AND (c) the expected language itself scores below a
+        #      LOW_EXPECTED_SCORE floor — all three conditions must hold simultaneously.
+        
+        # --- Script families that are unambiguously non-Latin ---
+        NON_LATIN_SCRIPTS = [
+            r"[\u0400-\u04FF]",   # Cyrillic
+            r"[\u0600-\u06FF]",   # Arabic
+            r"[\u4E00-\u9FFF]",   # CJK Unified Ideographs
+            r"[\u3040-\u30FF]",   # Hiragana / Katakana
+            r"[\u0900-\u097F]",   # Devanagari (Hindi)
+            r"[\u0B80-\u0BFF]",   # Tamil
+            r"[\u0C00-\u0C7F]",   # Telugu
+            r"[\u0A80-\u0AFF]",   # Gujarati
+        ]
+
+        # Latin-script app languages (extend this list as you add more languages)
+        LATIN_SCRIPT_LANGUAGES = {"en", "fr", "es", "de", "pt", "it", "nl", "pl", "ro", "tr"}
+
+        # Tune these without touching the logic below
+        MIN_LINGUISTIC_WORDS = 6    # need this many non-domain words to trust langdetect
+        BLOCK_CONFIDENCE     = 0.90 # detected-wrong-lang score must exceed this
+        LOW_EXPECTED_SCORE   = 0.10 # expected-lang score must be below this to block
+
+        # SQL/BI domain words that carry zero linguistic signal for language detection
+        SQL_DOMAIN_WORDS = {
+            "select", "from", "where", "group", "by", "order", "having", "limit",
+            "join", "inner", "outer", "left", "right", "on", "as", "distinct",
+            "count", "sum", "avg", "min", "max", "total", "sales", "amount",
+            "top", "show", "list", "give", "get", "find", "display", "fetch",
+            "unique", "type", "types", "product", "products", "category", "categories",
+            "year", "month", "quarter", "date", "revenue", "cost", "profit", "loss",
+            "region", "country", "city", "store", "brand", "customer", "customers",
+            "order", "orders", "item", "items",
+        }
+
         try:
-            from langdetect import detect, DetectorFactory
-            DetectorFactory.seed = 0
-            detected_lang = detect(trimmed)
-            
-            # For queries longer than 2 words, enforce strict language matching
-            if len(trimmed.split()) > 2 and detected_lang != app_language:
-                duration = perf_counter() - overall_start
-                print_terminal(f"Language Mismatch Block (Got: {detected_lang}, Expected: {app_language})")
-                log.append(f"[Node: Input Guardrail] Blocked: Language mismatch. ({duration:.3f}s)")
-                node_timings["00_input_guardrail"] = duration
-                return "Security Policy Violation: Your input does not match the selected support language.", log, None, None
-                
+            from langdetect import detect_langs, DetectorFactory, LangDetectException
+            DetectorFactory.seed = 0  # make results deterministic
+
+            # Layer 1: Script gate (catches CJK / Arabic / Cyrillic with zero FP)
+            if app_language in LATIN_SCRIPT_LANGUAGES:
+                for script_pattern in NON_LATIN_SCRIPTS:
+                    if re.search(script_pattern, trimmed):
+                        duration = perf_counter() - overall_start
+                        print_terminal("Language Mismatch Block (non-Latin script detected)")
+                        log.append(f"[Node: Input Guardrail] Blocked: Non-Latin script in Latin-language session. ({duration:.3f}s)")
+                        node_timings["00_input_guardrail"] = duration
+                        return "Security Policy Violation: Your input does not match the selected support language.", log, None, None
+
+            # Layer 2: Strip domain tokens + numbers so only linguistic words remain
+            tokens_raw = re.sub(r"\d+", "", trimmed).split()  # remove all digit-only tokens
+            linguistic_words = [
+                w for w in tokens_raw
+                if w.isalpha() and w.lower() not in SQL_DOMAIN_WORDS and len(w) > 2
+            ]
+
+            # Layer 3: Confidence-gated detection on the cleaned linguistic signal
+            if len(linguistic_words) >= MIN_LINGUISTIC_WORDS:
+                linguistic_text = " ".join(linguistic_words)
+                try:
+                    lang_scores = detect_langs(linguistic_text)  # returns list of Language objects
+                    # Build a {lang_code: probability} dict
+                    score_map = {ls.lang: ls.prob for ls in lang_scores}
+                    top_lang  = lang_scores[0].lang
+                    top_score = lang_scores[0].prob
+                    expected_score = score_map.get(app_language, 0.0)
+
+                    if (top_lang != app_language
+                            and top_score >= BLOCK_CONFIDENCE
+                            and expected_score < LOW_EXPECTED_SCORE):
+                        duration = perf_counter() - overall_start
+                        print_terminal(f"Language Mismatch Block (Got: {top_lang} @ {top_score:.2f}, Expected: {app_language} @ {expected_score:.2f})")
+                        log.append(f"[Node: Input Guardrail] Blocked: Language mismatch. ({duration:.3f}s)")
+                        node_timings["00_input_guardrail"] = duration
+                        return "Security Policy Violation: Your input does not match the selected support language.", log, None, None
+                    # else: ambiguous / low-confidence detection → allow through (safe default)
+
+                except LangDetectException:
+                    # Too short or non-linguistic after stripping → cannot detect → allow through
+                    pass
+            # else: fewer than MIN_LINGUISTIC_WORDS after stripping → skip detection entirely
+
+        except ImportError:
+            # langdetect not installed → degrade gracefully, rely on script gate only
+            self.logger.warning("[Input Guardrail] langdetect not installed; script-gate only active.")
         except Exception as e:
-            # Langdetect fails on non-linguistic inputs (URLs, decimal sequences, etc.)
-            duration = perf_counter() - overall_start
-            print_terminal(f"Language Detection Failure: {type(e).__name__}: {e}")
-            log.append(f"[Node: Input Guardrail] Blocked: Unrecognized input. ({duration:.3f}s)")
-            node_timings["00_input_guardrail"] = duration
-            return "Security Policy Violation: Your input does not match the selected support language.", log, None, None
+            # Any other unexpected error: log and allow through (fail open for availability)
+            self.logger.warning(f"[Input Guardrail] Language detection skipped due to unexpected error: {type(e).__name__}: {e}")
 
         # 2. Forbidden Operations & Prompt Injection Check
         dangerous_patterns = {
@@ -550,48 +646,72 @@ class TextToSQLAgent:
                         log.append(f"[Node: Shadow Discovery] DB scan for '{tbl}': {discovered_units} (cached for session)")
                         break
                         
-            if len(discovered_units) > 1:
+            if len(discovered_units) >= 1:
                 import re
-                unit_context["collision_detected"] = True
-                unit_context["units_found"] = list(discovered_units.keys())
                 
                 # Deterministic Target Unit Selection (NO LLM REQUIRED)
                 target_unit = None
+                user_requested_unit = None
                 
-                # Rule 1: User Preference
-                for unit in discovered_units.keys():
-                    if re.search(rf'\b{unit.lower()}\b', actual_query.lower()):
-                        target_unit = unit
+                # Rule 1: Explicit User Request (checks against common global currencies)
+                known_currencies = ['usd', 'eur', 'gbp', 'inr', 'yen', 'jpy', 'aud', 'cad', 'sgd', 'chf']
+                for unit in known_currencies:
+                    if re.search(rf'\b{unit}\b', actual_query.lower()):
+                        user_requested_unit = unit.upper()
+                        if user_requested_unit == 'JPY':
+                            user_requested_unit = 'YEN'
                         break
+                        
+                if user_requested_unit:
+                    target_unit = user_requested_unit
+                else:
+                    # Rule 2: User Preference from Database Units
+                    for unit in discovered_units.keys():
+                        if re.search(rf'\b{unit.lower()}\b', actual_query.lower()):
+                            target_unit = unit
+                            break
+                            
+                    # Rule 3: Majority Rule
+                    if not target_unit:
+                        sorted_units = sorted(discovered_units.items(), key=lambda x: x[1], reverse=True) # Descending
+                        target_unit = sorted_units[0][0]
                 
-                # Rule 2: Majority
-                if not target_unit:
-                    sorted_units = sorted(discovered_units.items(), key=lambda x: x[1], reverse=True) # Descending (highest first)
-                    target_unit = sorted_units[0][0]
+                # Evaluate if conversion is needed
+                db_units = list(discovered_units.keys())
+                needs_conversion = len(db_units) > 1 or (len(db_units) == 1 and db_units[0] != target_unit)
                 
-                # Find minority to convert
-                minority_units = [u for u in discovered_units.keys() if u != target_unit]
-                minority = minority_units[0] if minority_units else target_unit
-                
-                # Fetch Web Factor
-                from src.utils.web_service import WebConversionService
-                search_q = f"convert {minority} to {target_unit}"
-                web_factor = WebConversionService.get_conversion_factor(search_q)
-                
-                unit_context["live_web_factor"] = web_factor
-                unit_context["caution_message"] = f"Multiple currency units ({', '.join(unit_context['units_found'])}) were detected. The data has been mathematically normalized to {target_unit} before aggregation."
-                
-                log.append(f"[Node: Pre-Gen UUI] Collision detected ({unit_context['units_found']}). Auto-selected Target: {target_unit}. Web Factor: {web_factor}")
-                
-                # Build the conversion rules for the SQL Generation prompt
-                unit_conversion_rules = f"""
+                if needs_conversion:
+                    unit_context["collision_detected"] = True
+                    unit_context["units_found"] = db_units
+                    
+                    from src.utils.web_service import WebConversionService
+                    factors_text = []
+                    example_clauses = []
+                    
+                    for source_unit in db_units:
+                        if source_unit == target_unit:
+                            example_clauses.append(f"WHEN currency = '{source_unit}' THEN sales_amount")
+                        else:
+                            search_q = f"convert {source_unit} to {target_unit}"
+                            web_factor = WebConversionService.get_conversion_factor(search_q)
+                            factors_text.append(f"{source_unit} -> {target_unit}: {web_factor}")
+                            example_clauses.append(f"WHEN currency = '{source_unit}' THEN (sales_amount * conversion_factor)")
+                    
+                    unit_context["live_web_factor"] = " | ".join(factors_text)
+                    unit_context["caution_message"] = f"Values have been mathematically normalized to {target_unit} before aggregation. (Sources: {', '.join(db_units)})"
+                    
+                    log.append(f"[Node: Pre-Gen UUI] Normalization triggered. Target: {target_unit}. Web Factors: {unit_context['live_web_factor']}")
+                    
+                    # Build the conversion rules for the SQL Generation prompt
+                    unit_conversion_rules = f"""
         MANDATORY UNIT NORMALIZATION RULES:
-        We detected mixed currencies/units in this table ({', '.join(unit_context['units_found'])}).
+        We detected units/currencies in this table ({', '.join(db_units)}).
+        The user requested or the system selected the target unit: '{target_unit}'.
         You MUST perform RECORD-LEVEL mathematical normalization inside your SUM/AVG aggregations.
         Target Unit for all calculations: '{target_unit}'
-        Conversion Rule: {web_factor}
+        Conversion Rules: {', '.join(factors_text)}
         
-        Example format: SUM(CASE WHEN currency = '{minority}' THEN (sales_amount * 0.58) WHEN currency = '{target_unit}' THEN sales_amount ELSE sales_amount END)
+        Example format: SUM(CASE {' '.join(example_clauses)} ELSE sales_amount END)
         Do NOT use MAX(currency) or group by currency. Only output the normalized aggregated numbers.
         """
         
@@ -704,6 +824,12 @@ class TextToSQLAgent:
             self.metrics.add_timing("sql_exec", exec_duration)
             if error:
                 log.append(f"[Node: SQL Exec Failed] Attempt {attempt + 1}. Error: {error}")
+                
+                # Intercept Security/Forbidden Blocks to prevent infinite retry loops on malicious generated SQL
+                if "forbidden operation" in str(error).lower() or "blocked:" in str(error).lower():
+                    self.logger.warning(f"Security intercept in execution loop. Aborting retries.")
+                    return f"Security Policy Violation: {error}", log, None, None
+                    
                 if attempt < max_retries - 1:
                     log.append("[Node: SQL Correction] Auto-fixing...")
                     print_terminal("SQL Correction")
