@@ -35,7 +35,7 @@ INSTRUCTIONS TO ADD YOUR VERTICAL VIDEO:
 4. It will render perfectly in a vertical format on the right side!
 -->
 
-**[▶️ DRAG & DROP YOUR VIDEO .MP4 FILE HERE IN GITHUB EDITOR]**
+https://github.com/user-attachments/assets/6e673fca-1b1f-4c45-800c-50fbf8f50550
 
 </td>
 </tr>
