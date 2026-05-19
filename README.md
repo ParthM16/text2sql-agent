@@ -1,5 +1,9 @@
 # 🤖 Text-to-SQL AI Agent: Talk to Your Database in Plain English
 
+<table>
+<tr>
+<td width="70%">
+
 ## 📑 Table of Contents
 
 * [🎯 What We Built](#-what-we-built)
@@ -18,6 +22,27 @@ In most businesses, data is locked behind a wall called **SQL**. When business u
 This project tears down that wall. 
 
 I built an **AI Agent** that allows anyone to ask questions about their business in plain English. The agent understands the intent, writes the database query, executes it, and returns a formatted human-readable answer with charts-in under few seconds.
+
+</td>
+<td width="30%" align="center">
+
+<!-- 
+INSTRUCTIONS TO ADD YOUR VERTICAL VIDEO:
+1. Open this README.md on GitHub.com and click the "Edit" (pencil) icon.
+2. Drag and drop your .mp4 video file right here into this space. 
+3. GitHub will automatically upload it and generate a video link that looks like this:
+   https://github.com/user-attachments/assets/xxxx-xxxx-xxxx
+4. It will render perfectly in a vertical format on the right side!
+-->
+
+
+https://github.com/user-attachments/assets/6e673fca-1b1f-4c45-800c-50fbf8f50550
+
+
+
+</td>
+</tr>
+</table>
 
 ## 👥 Who Is This For?
 
