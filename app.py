@@ -14,7 +14,7 @@ from src.utils.metrics import PersistentMetrics
 import streamlit as st
 import pandas as pd
 from src.db.helper import DBHelper
-from src.retrieval.vector_store import VectorStore
+from src.retrieval import get_vector_store
 from src.agent.workflow import TextToSQLAgent
 from src.utils.disk_cache import clean_old_cache, save_to_cache
 from datetime import datetime
@@ -73,13 +73,16 @@ st.markdown("""
 def get_db_helper(): return DBHelper()
 
 @st.cache_resource(show_spinner=False)
-def get_vector_store(): return VectorStore()
+def load_vector_store(backend: str = "faiss"):
+    return get_vector_store(backend=backend)
 
 # ── Session State Initialization ─────────────────────────────
 if "db_helper" not in st.session_state:
     st.session_state.db_helper = get_db_helper()
+if "vector_backend" not in st.session_state:
+    st.session_state.vector_backend = os.getenv("VECTOR_BACKEND", "faiss").lower()
 if "vector_store" not in st.session_state:
-    st.session_state.vector_store = get_vector_store()
+    st.session_state.vector_store = load_vector_store(st.session_state.vector_backend)
 if "agent" not in st.session_state:
     st.session_state.agent = TextToSQLAgent(st.session_state.db_helper, st.session_state.vector_store)
 if "messages" not in st.session_state:

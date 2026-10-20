@@ -13,7 +13,7 @@ from time import perf_counter
 
 from src.agent.nodes import AgentNodes
 from src.db.helper import DBHelper
-from src.retrieval.vector_store import VectorStore
+from src.retrieval import get_vector_store
 from src.utils.metrics import PersistentMetrics, SessionMetrics
 from src.utils.logger import get_logger
 
@@ -21,9 +21,9 @@ from src.utils.logger import get_logger
 class TextToSQLAgent:
     """Production-grade Text-to-SQL agent with multi-node agentic workflow."""
 
-    def __init__(self, db_helper: DBHelper, vector_store: VectorStore):
+    def __init__(self, db_helper: DBHelper, vector_store=None):
         self.db = db_helper
-        self.vs = vector_store
+        self.vs = vector_store if vector_store is not None else get_vector_store()
         self.nodes = AgentNodes()
 
         #  Conversation Memory 

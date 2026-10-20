@@ -13,42 +13,14 @@ from sentence_transformers import SentenceTransformer
 class VectorStore:
     """Manages FAISS vector indexes for few-shot retrieval and typo correction."""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        import os
-        import socket
-        import numpy as np
-
-        print("\n" + "=" * 50)
-        print(f"[INIT] Loading Vector AI Model: '{model_name}' into memory...")
-        
-        # PRE-EMPTIVE CONNECTIVITY CHECK (To avoid the 5-retry hanging delay)
-        is_offline = False
-        try:
-            # Fast check (0.5s timeout) to see if we can reach HuggingFace
-            socket.create_connection(("huggingface.co", 443), timeout=0.5)
-        except (socket.timeout, OSError):
-            is_offline = True
-            print("[OFFLINE] Network unreachable. Forcing offline mode immediately...")
-            os.environ['TRANSFORMERS_OFFLINE'] = '1'
-            os.environ['HF_DATASETS_OFFLINE'] = '1'
-
-        try:
-            # Try loading (will be instant if is_offline is True)
-            self.encoder = SentenceTransformer(model_name, local_files_only=is_offline)
-        except Exception as e:
-            # Final fallback if the first attempt failed for non-network reasons
-            if not is_offline:
-                print(f"[WARN] Status: Model verification failed ({type(e).__name__}). Switching to Local-Only...")
-                os.environ['TRANSFORMERS_OFFLINE'] = '1'
-                os.environ['HF_DATASETS_OFFLINE'] = '1'
-                self.encoder = SentenceTransformer(model_name, local_files_only=True)
-            else:
-                print(f"[ERROR] Error: Model '{model_name}' not found locally. Please connect once to download.")
-                raise e
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", encoder=None):
+        if encoder is not None:
+            self.encoder = encoder
+        else:
+            from src.retrieval.embeddings import get_embedding_model
+            self.encoder = get_embedding_model(model_name)
 
         self.dimension = self.encoder.get_embedding_dimension()
-        print(" Vector Model Loaded Successfully!")
-        print("=" * 50 + "\n")
 
         # Attribute correction index
         self.attribute_index = faiss.IndexFlatL2(self.dimension)
@@ -156,6 +128,21 @@ class VectorStore:
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(examples, f, indent=2)
             os.replace(temp_path, file_path)
+
+            # Dual-write sync to ChromaDB if active in memory
+            try:
+                from src.retrieval.store_factory import VectorStoreFactory
+                VectorStoreFactory.sync_correction_to_counterpart(
+                    source_store=self,
+                    query=query,
+                    fixed_sql=fixed_sql,
+                    error_msg=error_msg,
+                    is_duplicate=is_duplicate,
+                    target_query=self.few_shot_mapping[duplicate_idx]["query"] if is_duplicate else None
+                )
+            except Exception as sync_err:
+                print(f"[WARN] Dual-write sync to Chroma failed: {sync_err}")
+
             return True
         except Exception as e:
             print(f"[ERROR] Learning Loop failed: {e}")
