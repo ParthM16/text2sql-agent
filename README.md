@@ -36,7 +36,9 @@ INSTRUCTIONS TO ADD YOUR VERTICAL VIDEO:
 -->
 
 **Demo Video**<br>
-<video src="T2SQL Demo Video_2.mp4" controls="controls" width="100%"></video>
+
+
+https://github.com/user-attachments/assets/f4b3aecb-36d7-445f-a58f-7d0cd8131dca
 
 </td>
 </tr>
