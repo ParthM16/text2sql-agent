@@ -137,21 +137,30 @@ class DBHelper:
     # 
     # Knowledge Engine (Persistent Schema Cache)
     # 
+    # ─────────────────────────────────────────────────────────────
+    # Knowledge Engine (Persistent Schema Cache & Enterprise Catalog)
+    # ─────────────────────────────────────────────────────────────
     def sync_knowledge_base(self):
-        """Fetches latest schema and merges with existing descriptions in local JSON."""
-        logger.info(f"[Knowledge] Syncing knowledge base for mode: {self.mode}...")
+        """Fetches latest schema (with PKs/FKs) and merges with existing descriptions in local JSON."""
+        logger.info(f"[Knowledge] Syncing enterprise knowledge base for mode: {self.mode}...")
         
         # 1. Fetch live structured schema
-        new_tables = self.get_schema_structured()
-        if isinstance(new_tables, str) and "ERROR" in new_tables:
-            return False, new_tables
+        new_schema_data = self.get_schema_structured()
+        if isinstance(new_schema_data, str) and "ERROR" in new_schema_data:
+            return False, new_schema_data
 
-        # 2. Load existing knowledge (to preserve descriptions)
+        new_tables = new_schema_data.get("tables", {})
+        live_relationships = new_schema_data.get("relationships", [])
+
+        # 2. Load existing knowledge (to preserve user descriptions and custom notes)
         existing_knowledge = {}
+        existing_relationships = []
         if os.path.exists(KNOWLEDGE_PATH):
             try:
                 with open(KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
-                    existing_knowledge = json.load(f).get("tables", {})
+                    cached_data = json.load(f)
+                    existing_knowledge = cached_data.get("tables", {})
+                    existing_relationships = cached_data.get("relationships", [])
             except Exception:
                 logger.warning("[Knowledge] Could not load existing knowledge for merging.")
 
@@ -159,18 +168,29 @@ class DBHelper:
         for table_name, table_info in new_tables.items():
             if table_name in existing_knowledge:
                 # Table exists? Keep table description
-                table_info["description"] = existing_knowledge[table_name].get("description", "")
+                cached_t = existing_knowledge[table_name]
+                table_info["description"] = cached_t.get("description", "") or table_info.get("description", "")
                 
                 # Column check: Keep column descriptions
-                existing_cols = existing_knowledge[table_name].get("columns", {})
-                for col_name, col_info in table_info["columns"].items():
+                existing_cols = cached_t.get("columns", {})
+                for col_name, col_info in table_info.get("columns", {}).items():
                     if col_name in existing_cols:
-                        col_info["description"] = existing_cols[col_name].get("description", "")
+                        col_info["description"] = existing_cols[col_name].get("description", "") or col_info.get("description", "")
+
+        # Merge relationships: combine live and existing without duplicates
+        rel_set = set()
+        merged_relationships = []
+        for r in live_relationships + existing_relationships:
+            key = (r.get("from_table"), r.get("from_column"), r.get("to_table"), r.get("to_column"))
+            if key not in rel_set and all(key):
+                rel_set.add(key)
+                merged_relationships.append(r)
 
         knowledge = {
             "mode": self.mode,
             "database": self.database if self.mode == "sqlserver" else "sqlite_memory",
             "tables": new_tables,
+            "relationships": merged_relationships,
             "updated_at": pd.Timestamp.now().isoformat()
         }
 
@@ -184,98 +204,313 @@ class DBHelper:
             logger.error(f"[Knowledge] Failed to save knowledge base: {e}")
             return False, str(e)
 
-    def get_knowledge_schema(self):
-        """Retrieves and formats schema with descriptions from local JSON."""
+    def get_knowledge_structured(self) -> dict:
+        """Retrieves structured schema knowledge dictionary from local JSON."""
         if not os.path.exists(KNOWLEDGE_PATH):
-            return None
-
+            return {}
         try:
             with open(KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
                 knowledge = json.load(f)
-            
             if knowledge.get("mode") == self.mode:
                 if self.mode == "sqlserver" and knowledge.get("database") != self.database:
-                    return None
-                
-                # Format the structured JSON back into an enriched string for the LLM
-                tables = knowledge.get("tables", {})
-                formatted_lines = []
-                for table_name, info in tables.items():
-                    desc = info.get("description", "").strip()
-                    table_line = f"Table: {table_name}"
-                    if desc:
-                        table_line += f" (Note: {desc})"
-                    
-                    col_details = []
-                    for col_name, col_info in info.get("columns", {}).items():
-                        c_desc = col_info.get("description", "").strip()
-                        c_type = col_info.get("type", "")
-                        c_str = col_name
-                        if c_type:
-                            c_str += f" ({c_type})"
-                        if c_desc:
-                            c_str += f" [Note: {c_desc}]"
-                        col_details.append(c_str)
-                    
-                    table_line += f", Columns: [{', '.join(col_details)}]"
-                    formatted_lines.append(table_line)
-                
-                logger.info("[Knowledge] Enriched schema retrieved from local Knowledge Base.")
-                return "\n".join(formatted_lines)
+                    return {}
+                return knowledge
         except Exception as e:
             logger.warning(f"[Knowledge] Failed to parse knowledge base: {e}")
-            
-        return None
+        return {}
 
-    # 
-    # Schema Introspection (Live)
-    # 
+    def get_table_catalog(self) -> str:
+        """Returns a lean Table Catalog (names, business summaries, PKs/FKs).
+        
+        CRITICAL FOR ENTERPRISE SCALE (50+ tables):
+        Does NOT dump all 1,000 columns into the Table Selection node.
+        Only provides table signatures and high-level summaries so the LLM or vector search
+        can pick relevant tables using < 500 tokens instead of 25,000 tokens.
+        """
+        knowledge = self.get_knowledge_structured()
+        tables = knowledge.get("tables", {})
+        if not tables:
+            # Fallback to direct schema if cache is empty
+            raw_struct = self.get_schema_structured()
+            tables = raw_struct.get("tables", {}) if isinstance(raw_struct, dict) else {}
+
+        relationships = knowledge.get("relationships", [])
+        
+        catalog_lines = []
+        for table_name, info in tables.items():
+            desc = info.get("description", "").strip()
+            pks = info.get("primary_keys", [])
+            
+            # Find foreign keys involving this table
+            fks = []
+            for r in relationships:
+                if r.get("from_table") == table_name:
+                    fks.append(f"{r.get('from_column')} -> {r.get('to_table')}.{r.get('to_column')}")
+
+            entry = f"Table: {table_name}"
+            if desc:
+                entry += f" | Summary: {desc}"
+            if pks:
+                entry += f" | Primary Keys: [{', '.join(pks)}]"
+            if fks:
+                entry += f" | Foreign Keys: [{', '.join(fks)}]"
+            catalog_lines.append(entry)
+
+        return "\n".join(catalog_lines)
+
+    def get_pruned_schema_string(self, selected_tables: list[str], table_to_columns: dict[str, list[str]] = None) -> str:
+        """Formats a high-signal, relation-aware schema string for SQL generation.
+        
+        Args:
+            selected_tables: List of table names to include in the schema.
+            table_to_columns: Optional mapping of {table_name: [col1, col2, ...]} for pruned wide tables.
+                              If None or a table is missing from map, all columns for that table are included.
+        """
+        knowledge = self.get_knowledge_structured()
+        all_tables = knowledge.get("tables", {})
+        if not all_tables:
+            raw_struct = self.get_schema_structured()
+            all_tables = raw_struct.get("tables", {}) if isinstance(raw_struct, dict) else {}
+
+        relationships = knowledge.get("relationships", [])
+        selected_set = {t.strip().lower() for t in selected_tables if t.strip()}
+        
+        lines = []
+        for table_name, info in all_tables.items():
+            if table_name.lower() not in selected_set:
+                continue
+
+            desc = info.get("description", "").strip()
+            pks = set(info.get("primary_keys", []))
+            all_cols = info.get("columns", {})
+            total_col_count = len(all_cols)
+
+            # Determine which columns to include
+            if table_to_columns and table_name in table_to_columns:
+                target_cols = [c for c in table_to_columns[table_name] if c in all_cols]
+                # Always ensure primary keys are present in pruned columns
+                for pk in pks:
+                    if pk in all_cols and pk not in target_cols:
+                        target_cols.insert(0, pk)
+                is_pruned = len(target_cols) < total_col_count
+            else:
+                target_cols = list(all_cols.keys())
+                is_pruned = False
+
+            header = f"Table: {table_name}"
+            if is_pruned:
+                header += f" (Showing {len(target_cols)} of {total_col_count} columns)"
+            if desc:
+                header += f" (Note: {desc})"
+            lines.append(header)
+
+            col_details = []
+            for col_name in target_cols:
+                col_info = all_cols[col_name]
+                c_type = col_info.get("type", "")
+                c_desc = col_info.get("description", "").strip()
+                
+                parts = [col_name]
+                flags = []
+                if col_name in pks:
+                    flags.append("PK")
+                if col_info.get("is_fk"):
+                    flags.append("FK")
+
+                type_str = f"({c_type})" if c_type else ""
+                flag_str = f"[{', '.join(flags)}]" if flags else ""
+                
+                c_repr = f"{col_name} {type_str}".strip()
+                if flag_str:
+                    c_repr += f" {flag_str}"
+                if c_desc:
+                    c_repr += f" [Note: {c_desc}]"
+                col_details.append(c_repr)
+
+            lines.append(f"  Columns: [{', '.join(col_details)}]")
+
+        # Append relevant relationships between the selected tables
+        relevant_rels = []
+        for r in relationships:
+            ft = r.get("from_table", "").lower()
+            tt = r.get("to_table", "").lower()
+            if ft in selected_set and tt in selected_set:
+                relevant_rels.append(f"{r.get('from_table')}.{r.get('from_column')} = {r.get('to_table')}.{r.get('to_column')}")
+
+        if relevant_rels:
+            lines.append("")
+            lines.append("Known Relationships / Join Conditions:")
+            for rel in relevant_rels:
+                lines.append(f"  - {rel}")
+
+        return "\n".join(lines)
+
+    def get_knowledge_schema(self):
+        """Retrieves and formats full schema with descriptions from local JSON (backwards compatible)."""
+        knowledge = self.get_knowledge_structured()
+        tables = knowledge.get("tables", {})
+        if not tables:
+            return None
+        return self.get_pruned_schema_string(selected_tables=list(tables.keys()))
+
+    # ─────────────────────────────────────────────────────────────
+    # Schema Introspection (Live: Tables, PKs, FKs, Types)
+    # ─────────────────────────────────────────────────────────────
     def get_schema_structured(self) -> dict:
-        """New: Returns a structured dictionary of the schema {table: {description, columns: {col: {type, description}}}}"""
+        """Returns structured dictionary of schema {tables: {tbl: {...}}, relationships: [...]}"""
         if self.mode == "sqlite" and self.sqlite_engine:
             try:
                 inspector = inspect(self.sqlite_engine)
                 schema_dict = {}
+                relationships = []
                 for table_name in inspector.get_table_names():
+                    pk_info = inspector.get_pk_constraint(table_name)
+                    pks = pk_info.get("constrained_columns", []) if pk_info else []
+                    
+                    fk_info = inspector.get_foreign_keys(table_name) or []
+                    fks = []
+                    for fk in fk_info:
+                        for sc, rc in zip(fk.get("constrained_columns", []), fk.get("referred_columns", [])):
+                            fks.append({"constrained_column": sc, "referred_table": fk.get("referred_table"), "referred_column": rc})
+                            relationships.append({
+                                "from_table": table_name,
+                                "from_column": sc,
+                                "to_table": fk.get("referred_table"),
+                                "to_column": rc
+                            })
+
                     cols = {}
                     for c in inspector.get_columns(table_name):
-                        cols[c['name']] = {
+                        col_name = c['name']
+                        cols[col_name] = {
                             "type": str(c.get("type", "TEXT")),
-                            "description": ""
+                            "description": "",
+                            "is_pk": col_name in pks,
+                            "is_fk": any(f["constrained_column"] == col_name for f in fks)
                         }
                     schema_dict[table_name] = {
                         "description": "",
+                        "primary_keys": pks,
+                        "foreign_keys": fks,
                         "columns": cols
                     }
-                return schema_dict
+                return {"tables": schema_dict, "relationships": relationships}
             except Exception as e:
                 return f"SCHEMA ERROR: {str(e)}"
         else:
             if not self.database:
                 return "SCHEMA ERROR: No database provided in .env"
 
-            query = """
+            engine = self._get_sqlserver_engine()
+
+            # 1. Columns & Data Types
+            query_cols = """
             SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = 'dbo'
             ORDER BY TABLE_NAME, ORDINAL_POSITION
             """
+            
+            # 2. Primary Keys
+            query_pks = """
+            SELECT tc.TABLE_NAME, kcu.COLUMN_NAME
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
+                ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME 
+                AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+            WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND tc.TABLE_SCHEMA = 'dbo'
+            """
+
+            # 3. Explicit Foreign Keys
+            query_fks = """
+            SELECT 
+                tp.name AS from_table,
+                cp.name AS from_column,
+                tr.name AS to_table,
+                cr.name AS to_column
+            FROM sys.foreign_keys fk
+            INNER JOIN sys.tables tp ON fk.parent_object_id = tp.object_id
+            INNER JOIN sys.tables tr ON fk.referenced_object_id = tr.object_id
+            INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            INNER JOIN sys.columns cp ON fkc.parent_object_id = cp.object_id AND fkc.parent_column_id = cp.column_id
+            INNER JOIN sys.columns cr ON fkc.referenced_object_id = cr.object_id AND fkc.referenced_column_id = cr.column_id
+            """
             try:
-                engine = self._get_sqlserver_engine()
-                df = pd.read_sql(query, engine)
+                col_df = pd.read_sql(query_cols, engine)
+                
+                try:
+                    pk_df = pd.read_sql(query_pks, engine)
+                    pks_by_table = {}
+                    for _, r in pk_df.iterrows():
+                        pks_by_table.setdefault(r["TABLE_NAME"], []).append(r["COLUMN_NAME"])
+                except Exception:
+                    pks_by_table = {}
+
+                try:
+                    fk_df = pd.read_sql(query_fks, engine)
+                    relationships = fk_df.to_dict(orient="records")
+                except Exception:
+                    relationships = []
+
+                # Build table dictionaries
                 schema_dict = {}
-                for table_name, group in df.groupby("TABLE_NAME"):
+                for table_name, group in col_df.groupby("TABLE_NAME"):
+                    table_pks = pks_by_table.get(table_name, [])
+                    table_fks = [r for r in relationships if r.get("from_table") == table_name]
+                    fk_cols = {r.get("from_column") for r in table_fks}
+
                     cols = {}
                     for _, row in group.iterrows():
-                        cols[row["COLUMN_NAME"]] = {
+                        c_name = row["COLUMN_NAME"]
+                        cols[c_name] = {
                             "type": row["DATA_TYPE"],
-                            "description": ""
+                            "description": "",
+                            "is_pk": c_name in table_pks,
+                            "is_fk": c_name in fk_cols
                         }
                     schema_dict[table_name] = {
                         "description": "",
+                        "primary_keys": table_pks,
+                        "foreign_keys": table_fks,
                         "columns": cols
                     }
-                return schema_dict
+
+                # 4. Implicit Foreign Key Inference (Standard Enterprise heuristic)
+                # If explicit FKs are empty, infer relationships where column names match PKs in other tables
+                # e.g., transactions.customer_code = customers.customer_code
+                all_pk_map = {} # {col_name: table_name}
+                for t_name, pks in pks_by_table.items():
+                    for pk in pks:
+                        all_pk_map[pk.lower()] = (t_name, pk)
+
+                existing_rel_pairs = {(r["from_table"].lower(), r["from_column"].lower(), r["to_table"].lower(), r["to_column"].lower()) for r in relationships}
+
+                for t_name, t_info in schema_dict.items():
+                    for c_name, c_info in t_info["columns"].items():
+                        c_lower = c_name.lower()
+                        # Direct match or singular/plural match (e.g. market_code and markets_code)
+                        matched_target = None
+                        if c_lower in all_pk_map and all_pk_map[c_lower][0] != t_name:
+                            matched_target = all_pk_map[c_lower]
+                        elif c_lower.replace("market_code", "markets_code") in all_pk_map and all_pk_map[c_lower.replace("market_code", "markets_code")][0] != t_name:
+                            matched_target = all_pk_map[c_lower.replace("market_code", "markets_code")]
+                        elif c_lower == "order_date" and "date" in schema_dict and "date" in pks_by_table.get("date", []):
+                            matched_target = ("date", "date")
+
+                        if matched_target:
+                            target_tbl, target_pk = matched_target
+                            rel_key = (t_name.lower(), c_name.lower(), target_tbl.lower(), target_pk.lower())
+                            if rel_key not in existing_rel_pairs:
+                                existing_rel_pairs.add(rel_key)
+                                relationships.append({
+                                    "from_table": t_name,
+                                    "from_column": c_name,
+                                    "to_table": target_tbl,
+                                    "to_column": target_pk
+                                })
+                                c_info["is_fk"] = True
+
+                return {"tables": schema_dict, "relationships": relationships}
             except Exception as e:
                 return f"SCHEMA ERROR: {str(e)}"
 

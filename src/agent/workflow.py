@@ -110,6 +110,7 @@ class TextToSQLAgent:
             "01_intent": 0.0,
             "02_knowledge": 0.0,
             "03_table_selection": 0.0,
+            "03b_schema_linking": 0.0,
             "04_few_shot": 0.0,
             "05_attr_match": 0.0,
             "06_sql_generation": 0.0,
@@ -578,29 +579,58 @@ class TextToSQLAgent:
 
         #  Standard NEW_QUERY / FOLLOW_UP pipeline 
         notify_ui("Searching Database")
-        #  Persistent Knowledge Engine: Check cache before querying DB
+        # ── Enterprise Persistent Knowledge Engine: Schema & Catalog Retrieval ──
         t_know = perf_counter()
-        full_schema = self.db.get_knowledge_schema()
+        knowledge_struct = self.db.get_knowledge_structured()
         
-        if full_schema is None:
+        if not knowledge_struct or not knowledge_struct.get("tables"):
             self.logger.info("[Knowledge] Cache missing or invalid. Triggering auto-sync...")
             ok, err = self.db.sync_knowledge_base()
             if not ok:
                 log.append(f"[Node: Knowledge Sync] FAILED: {err}")
                 return f"Database knowledge sync failed. Details: {err}", log, None, None
-            full_schema = self.db.get_knowledge_schema()
+            knowledge_struct = self.db.get_knowledge_structured()
+            try:
+                from src.retrieval.store_factory import VectorStoreFactory
+                VectorStoreFactory.index_database_schema(self.vs, knowledge_struct)
+            except Exception as e:
+                self.logger.warning(f"Failed to vector index schema: {e}")
             log.append("[Node: Schema Retrieval] Auto-synced and retrieved from Knowledge Base.")
         else:
-            log.append(f"[Node: Schema Retrieval] Retrieved from persistent Knowledge Base (Cache).")
+            log.append("[Node: Schema Retrieval] Retrieved from persistent Knowledge Base (Cache).")
         
         node_timings["02_knowledge"] = perf_counter() - t_know
 
-        # Node 1: Table Selection
+        # ── Tier 1: Table Discovery & Selection (Scales to 50+ Tables) ──
         print_terminal("Table Selection")
         t0 = perf_counter()
         usage = {}
+
+        all_tables = knowledge_struct.get("tables", {})
+        total_table_count = len(all_tables)
+
+        # Large-Schema Routing (e.g., 50+ tables / sheets):
+        # Use vector search to retrieve top candidate tables, plus any table explicitly mentioned in query
+        if total_table_count > config.TABLE_RETRIEVAL_THRESHOLD and hasattr(self.vs, "retrieve_relevant_tables"):
+            vector_candidates = self.vs.retrieve_relevant_tables(actual_query, top_k=config.TABLE_RETRIEVAL_TOP_K)
+            q_lower = actual_query.lower()
+            literal_candidates = [t for t in all_tables.keys() if t.lower() in q_lower]
+            candidate_tables = list(dict.fromkeys(vector_candidates + literal_candidates))
+            if not candidate_tables:
+                candidate_tables = list(all_tables.keys())[:config.TABLE_RETRIEVAL_TOP_K]
+
+            # Construct candidate-only lean catalog
+            table_catalog_str = "\n".join([
+                line for line in self.db.get_table_catalog().split("\n")
+                if any(f"Table: {ct}" in line for ct in candidate_tables)
+            ])
+            log.append(f"[Node: Table Retrieval] Pre-filtered {total_table_count} tables -> {len(candidate_tables)} candidates via semantic search.")
+        else:
+            # Lean table catalog (table names + summaries + PK/FK, NO 1,000 columns dumped!)
+            table_catalog_str = self.db.get_table_catalog()
+
         try:
-            relevant_tables, usage = self.nodes.table_selection(full_schema, actual_query)
+            relevant_tables, usage = self.nodes.table_selection(table_catalog_str, actual_query)
         except Exception as e:
             from src.agent.exceptions import AgentError
             if isinstance(e, AgentError):
@@ -624,13 +654,12 @@ class TextToSQLAgent:
                 self.logger.exception("Failed to persist table selection error")
             self.last_query = user_query
             return user_msg, log, None, None
+
         duration = perf_counter() - t0
         node_timings["03_table_selection"] = duration
         log.append(f"[Node: Table Selection] {relevant_tables} ({duration:.3f}s)")
 
-        #  Schema Anchor Logic (Semantic Validation) 
-        # We only block a query if the Table Selection node says "NONE" (meaning it found no relevant tables)
-        # AND it's a new query (not a follow-up that might refer to existing context/charts).
+        # Schema Anchor Logic (Semantic Validation)
         is_none = "NONE" in relevant_tables.upper() or not relevant_tables.strip()
         if is_none and intent == "NEW_QUERY":
             msg = ("I'm sorry, I couldn't find any relevant data for that request in the current database. "
@@ -646,16 +675,47 @@ class TextToSQLAgent:
             tokens_agg["total_tokens"] += usage.get("total_tokens") or (pt + rt)
             self.metrics.add_tokens("table_select", pt, rt)
 
-        # Build reduced schema string
-        reduced_schema = ""
-        for t in relevant_tables.split(","):
-            t = t.strip()
-            for line in full_schema.split("\n"):
-                # Match "Table: transactions" regardless of what follows (comma, space, paren)
-                if f"Table: {t}" in line or f"Table: {t.lower()}" in line.lower():
-                    reduced_schema += line + "\n"
-        if not reduced_schema.strip():
-            reduced_schema = full_schema  # fallback
+        # ── Tier 2: Schema Linking & Column Pruning (Scales to 1,000+ Columns) ──
+        t_link = perf_counter()
+        selected_tbl_list = [t.strip() for t in relevant_tables.split(",") if t.strip() and t.strip().upper() != "NONE"]
+        pruned_columns_map = {}
+        pruned_any = False
+
+        for tbl in selected_tbl_list:
+            tbl_info = None
+            for kn, ki in all_tables.items():
+                if kn.lower() == tbl.lower():
+                    tbl_info = ki
+                    break
+
+            if tbl_info:
+                table_cols = tbl_info.get("columns", {})
+                num_cols = len(table_cols)
+
+                # Check if wide table needs semantic column pruning
+                if num_cols > config.SCHEMA_PRUNE_COLUMN_THRESHOLD and hasattr(self.vs, "retrieve_relevant_columns"):
+                    retrieved_cols_map = self.vs.retrieve_relevant_columns(
+                        query=actual_query,
+                        candidate_tables=[tbl],
+                        top_k_per_table=config.SCHEMA_MAX_COLUMNS_PER_TABLE
+                    )
+                    semantic_cols = retrieved_cols_map.get(tbl, [])
+                    pks = tbl_info.get("primary_keys", [])
+                    fks = [c for c, c_meta in table_cols.items() if c_meta.get("is_fk")]
+                    date_cols = [c for c in table_cols.keys() if "date" in c.lower() or "time" in c.lower() or "year" in c.lower()]
+
+                    combined = list(dict.fromkeys(pks + fks + date_cols + semantic_cols))
+                    pruned_columns_map[tbl] = [c for c in combined if c in table_cols]
+                    pruned_any = True
+                    log.append(f"[Node: Schema Linking] Pruned '{tbl}' from {num_cols} to {len(pruned_columns_map[tbl])} high-signal columns.")
+
+        node_timings["03b_schema_linking"] = perf_counter() - t_link
+
+        # ── Tier 3: High-Signal Focused Context Schema Construction ──
+        if selected_tbl_list:
+            reduced_schema = self.db.get_pruned_schema_string(selected_tbl_list, pruned_columns_map if pruned_any else None)
+        else:
+            reduced_schema = self.db.get_knowledge_schema()
 
         #  Pre-Generation Shadow Discovery & UUI 
         print_terminal("Shadow Discovery (UUI)")

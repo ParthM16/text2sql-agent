@@ -70,14 +70,26 @@ class ChromaVectorStore:
             name="categorical_attributes",
             metadata={"hnsw:space": "l2"}
         )
+        self.table_collection = self.client.get_or_create_collection(
+            name="schema_tables",
+            metadata={"hnsw:space": "l2"}
+        )
+        self.column_collection = self.client.get_or_create_collection(
+            name="schema_columns",
+            metadata={"hnsw:space": "l2"}
+        )
 
         # Duck-typing proxies for code expecting FAISS index.ntotal
         self.few_shot_index = _IndexProxy(self.few_shot_collection)
         self.attribute_index = _IndexProxy(self.attribute_collection)
+        self.table_index = _IndexProxy(self.table_collection)
+        self.column_index = _IndexProxy(self.column_collection)
 
         # In-memory mappings kept in sync for fast access
         self.attribute_mapping: List[Dict[str, str]] = []
         self.few_shot_mapping: List[Dict[str, Any]] = []
+        self.table_mapping: List[Dict[str, str]] = []
+        self.column_mapping: List[Dict[str, Any]] = []
 
         # Hydrate in-memory mapping from persistent collections if they already contain data
         self._hydrate_in_memory_mappings()
@@ -213,7 +225,126 @@ class ChromaVectorStore:
 
         return few_shots
 
-    def learn_from_correction(self, query: str, fixed_sql: str, error_msg: str, file_path: str) -> bool:
+    # ─────────────────────────────────────────────────────────────
+    # Enterprise Schema RAG: Table Catalog Semantic Index
+    # ─────────────────────────────────────────────────────────────
+    def index_tables(self, tables_data: list[dict]):
+        """Indexes table summaries for semantic table retrieval (handles 50+ tables).
+        Format: [{'table': 'customers', 'summary': 'Table: customers | Summary: ...'}]
+        """
+        if not tables_data:
+            return
+
+        summaries = [t["summary"] for t in tables_data]
+        embeddings = self.encoder.encode(summaries).tolist()
+        ids = [f"table::{t['table'].lower()}" for t in tables_data]
+        metadatas = [{"table": t["table"]} for t in tables_data]
+
+        self.table_collection.upsert(
+            ids=ids,
+            embeddings=embeddings,
+            documents=summaries,
+            metadatas=metadatas
+        )
+
+        existing_tables = {t["table"].lower() for t in self.table_mapping}
+        for t in tables_data:
+            if t["table"].lower() not in existing_tables:
+                self.table_mapping.append(t)
+                existing_tables.add(t["table"].lower())
+
+    def retrieve_relevant_tables(self, query: str, top_k: int = 5) -> list[str]:
+        """Retrieves top-k table names most semantically relevant to the user query."""
+        total_count = self.table_collection.count()
+        if total_count == 0:
+            return []
+
+        fetch_k = min(top_k, total_count)
+        query_emb = self.encoder.encode([query]).tolist()
+        results = self.table_collection.query(
+            query_embeddings=query_emb,
+            n_results=fetch_k
+        )
+
+        seen = set()
+        matched_tables = []
+        if results and results.get("metadatas") and results["metadatas"][0]:
+            for meta in results["metadatas"][0]:
+                tbl = meta.get("table", "")
+                if tbl and tbl not in seen:
+                    seen.add(tbl)
+                    matched_tables.append(tbl)
+
+        return matched_tables
+
+    # ─────────────────────────────────────────────────────────────
+    # Enterprise Schema RAG: Column Pruning & Schema Linking Index
+    # ─────────────────────────────────────────────────────────────
+    def index_columns(self, columns_data: list[dict]):
+        """Indexes column signatures for semantic schema linking / column pruning (handles 1,000+ columns).
+        Format: [{'table': 'tbl', 'column': 'col', 'type': 'float', 'signature': 'Table: tbl, Column: col...'}]
+        """
+        if not columns_data:
+            return
+
+        signatures = [c["signature"] for c in columns_data]
+        embeddings = self.encoder.encode(signatures).tolist()
+        ids = [f"col::{c['table'].lower()}::{c['column'].lower()}" for c in columns_data]
+        metadatas = [
+            {
+                "table": c["table"],
+                "column": c["column"],
+                "type": c.get("type", ""),
+                "is_pk": str(c.get("is_pk", False)),
+                "is_fk": str(c.get("is_fk", False))
+            }
+            for c in columns_data
+        ]
+
+        self.column_collection.upsert(
+            ids=ids,
+            embeddings=embeddings,
+            documents=signatures,
+            metadatas=metadatas
+        )
+
+        existing_cols = {(c["table"].lower(), c["column"].lower()) for c in self.column_mapping}
+        for c in columns_data:
+            key = (c["table"].lower(), c["column"].lower())
+            if key not in existing_cols:
+                self.column_mapping.append(c)
+                existing_cols.add(key)
+
+    def retrieve_relevant_columns(self, query: str, candidate_tables: list[str] = None, top_k_per_table: int = 15) -> dict[str, list[str]]:
+        """Retrieves top matching columns per table using vector similarity.
+        Returns: {table_name: [col_name_1, col_name_2, ...]}
+        """
+        total_count = self.column_collection.count()
+        if total_count == 0:
+            return {}
+
+        cand_set = {t.lower() for t in candidate_tables} if candidate_tables else None
+        fetch_k = min(max(50, (len(candidate_tables or [1]) * top_k_per_table * 3)), total_count)
+        
+        query_emb = self.encoder.encode([query]).tolist()
+        results = self.column_collection.query(
+            query_embeddings=query_emb,
+            n_results=fetch_k
+        )
+
+        matched_cols = {}
+        if results and results.get("metadatas") and results["metadatas"][0]:
+            for meta in results["metadatas"][0]:
+                tbl = meta.get("table", "")
+                col = meta.get("column", "")
+                if cand_set and tbl.lower() not in cand_set:
+                    continue
+                
+                col_list = matched_cols.setdefault(tbl, [])
+                if len(col_list) < top_k_per_table and col not in col_list:
+                    col_list.append(col)
+
+        return matched_cols
         """
         Automated Learning Loop with L2 Semantic Deduplication.
         Upserts the correction into ChromaDB and persists to JSON.

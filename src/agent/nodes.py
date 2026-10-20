@@ -266,6 +266,7 @@ class AgentNodes:
         {unit_conversion_rules if unit_conversion_rules else ""}
 
         PERFORMANCE RULES (follow strictly):
+        - **JOIN CONDITIONS**: When joining multiple tables, adhere strictly to the "Known Relationships / Join Conditions" section in the schema context and join on the corresponding primary and foreign keys.
         - Do NOT JOIN with other tables if the required data already exists in a single table.
           For example, if a table has an 'order_date' column, extract the year directly
           using YEAR(order_date) or STRFTIME('%Y', order_date) instead of JOINing with a date dimension table.

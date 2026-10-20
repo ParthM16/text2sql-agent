@@ -33,6 +33,14 @@ class VectorStore:
         self.few_shot_index = faiss.IndexFlatL2(self.dimension)
         self.few_shot_mapping = []  # list of {'query': ..., 'sql': ...}
 
+        # Schema Table Index (for semantic table discovery & selection at 50+ table scale)
+        self.table_index = faiss.IndexFlatL2(self.dimension)
+        self.table_mapping = []  # list of {'table': str, 'summary': str}
+
+        # Schema Column Index (for semantic column pruning / schema linking at 1,000+ column scale)
+        self.column_index = faiss.IndexFlatL2(self.dimension)
+        self.column_mapping = []  # list of {'table': str, 'column': str, 'type': str, 'description': str, 'is_pk': bool, 'is_fk': bool}
+
     # 
     # Attribute Correction
     # 
@@ -75,6 +83,81 @@ class VectorStore:
         query_emb = self.encoder.encode([query])
         _, indices = self.few_shot_index.search(np.array(query_emb).astype("float32"), k)
         return [self.few_shot_mapping[i] for i in indices[0]]
+
+    # ─────────────────────────────────────────────────────────────
+    # Enterprise Schema RAG: Table Catalog Semantic Index
+    # ─────────────────────────────────────────────────────────────
+    def index_tables(self, tables_data: list[dict]):
+        """Indexes table summaries for semantic table retrieval (handles 50+ tables).
+        Format: [{'table': 'customers', 'summary': 'Table: customers | Summary: ...'}]
+        """
+        if not tables_data:
+            return
+        summaries = [t["summary"] for t in tables_data]
+        embeddings = self.encoder.encode(summaries)
+        self.table_index.add(np.array(embeddings).astype("float32"))
+        self.table_mapping.extend(tables_data)
+
+    def retrieve_relevant_tables(self, query: str, top_k: int = 5) -> list[str]:
+        """Retrieves top-k table names most semantically relevant to the user query."""
+        if self.table_index.ntotal == 0:
+            return []
+        k = min(top_k, self.table_index.ntotal)
+        query_emb = self.encoder.encode([query])
+        _, indices = self.table_index.search(np.array(query_emb).astype("float32"), k)
+        
+        seen = set()
+        results = []
+        for i in indices[0]:
+            if i < len(self.table_mapping):
+                tbl = self.table_mapping[i]["table"]
+                if tbl not in seen:
+                    seen.add(tbl)
+                    results.append(tbl)
+        return results
+
+    # ─────────────────────────────────────────────────────────────
+    # Enterprise Schema RAG: Column Pruning & Schema Linking Index
+    # ─────────────────────────────────────────────────────────────
+    def index_columns(self, columns_data: list[dict]):
+        """Indexes column signatures for semantic schema linking / column pruning (handles 1,000+ columns).
+        Format: [{'table': 'tbl', 'column': 'col', 'type': 'float', 'signature': 'Table: tbl, Column: col...'}]
+        """
+        if not columns_data:
+            return
+        signatures = [c["signature"] for c in columns_data]
+        embeddings = self.encoder.encode(signatures)
+        self.column_index.add(np.array(embeddings).astype("float32"))
+        self.column_mapping.extend(columns_data)
+
+    def retrieve_relevant_columns(self, query: str, candidate_tables: list[str] = None, top_k_per_table: int = 15) -> dict[str, list[str]]:
+        """Retrieves top matching columns per table using vector similarity.
+        Returns: {table_name: [col_name_1, col_name_2, ...]}
+        """
+        if self.column_index.ntotal == 0:
+            return {}
+
+        cand_set = {t.lower() for t in candidate_tables} if candidate_tables else None
+        
+        # Search a wider top-N in the global column index, then bucket by table
+        fetch_k = min(max(50, (len(candidate_tables or [1]) * top_k_per_table * 3)), self.column_index.ntotal)
+        query_emb = self.encoder.encode([query])
+        _, indices = self.column_index.search(np.array(query_emb).astype("float32"), fetch_k)
+
+        matched_cols = {}
+        for i in indices[0]:
+            if i < len(self.column_mapping):
+                col_meta = self.column_mapping[i]
+                tbl = col_meta["table"]
+                tbl_lower = tbl.lower()
+                if cand_set and tbl_lower not in cand_set:
+                    continue
+                
+                col_list = matched_cols.setdefault(tbl, [])
+                if len(col_list) < top_k_per_table and col_meta["column"] not in col_list:
+                    col_list.append(col_meta["column"])
+
+        return matched_cols
 
     def learn_from_correction(self, query, fixed_sql, error_msg, file_path):
         """

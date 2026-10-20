@@ -147,6 +147,39 @@ class AppConfig:
             "ChromaDB Persistent (Local Disk)": "chroma",
         }
 
+    # ── Enterprise Schema RAG Configuration ───────────────────────
+    @property
+    def SCHEMA_PRUNE_COLUMN_THRESHOLD(self) -> int:
+        """Tables with more columns than this threshold undergo semantic column pruning."""
+        try:
+            return int(os.getenv("SCHEMA_PRUNE_COLUMN_THRESHOLD", "20"))
+        except ValueError:
+            return 20
+
+    @property
+    def SCHEMA_MAX_COLUMNS_PER_TABLE(self) -> int:
+        """Maximum number of semantically retrieved columns to retain per wide table."""
+        try:
+            return int(os.getenv("SCHEMA_MAX_COLUMNS_PER_TABLE", "15"))
+        except ValueError:
+            return 15
+
+    @property
+    def TABLE_RETRIEVAL_THRESHOLD(self) -> int:
+        """If database has more tables than this threshold, use vector search to pre-filter candidate tables."""
+        try:
+            return int(os.getenv("TABLE_RETRIEVAL_THRESHOLD", "6"))
+        except ValueError:
+            return 6
+
+    @property
+    def TABLE_RETRIEVAL_TOP_K(self) -> int:
+        """Number of top candidate tables retrieved via vector similarity for large schemas."""
+        try:
+            return int(os.getenv("TABLE_RETRIEVAL_TOP_K", "6"))
+        except ValueError:
+            return 6
+
     # ── Credentials & GCP ────────────────────────────────────────
     @property
     def GEMINI_API_KEY(self) -> str:

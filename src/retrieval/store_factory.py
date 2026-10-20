@@ -77,17 +77,100 @@ class VectorStoreFactory:
         return cls._faiss_instance
 
     @classmethod
+    def index_database_schema(cls, store: Any, schema_data: dict) -> None:
+        """Indexes table summaries and column signatures into the vector store.
+        
+        Enables:
+          - Semantic table retrieval for 50+ table enterprise databases.
+          - Semantic column pruning / schema linking for 1,000+ column wide tables.
+        """
+        if not schema_data or not isinstance(schema_data, dict):
+            return
+
+        tables = schema_data.get("tables", {})
+        relationships = schema_data.get("relationships", [])
+
+        # 1. Prepare table documents
+        table_docs = []
+        for t_name, t_info in tables.items():
+            desc = t_info.get("description", "").strip()
+            pks = t_info.get("primary_keys", [])
+            fks = [
+                f"{r.get('from_column')} -> {r.get('to_table')}.{r.get('to_column')}"
+                for r in relationships if r.get("from_table") == t_name
+            ]
+            summary = f"Table: {t_name}"
+            if desc:
+                summary += f" | Summary: {desc}"
+            if pks:
+                summary += f" | Primary Keys: [{', '.join(pks)}]"
+            if fks:
+                summary += f" | Foreign Keys: [{', '.join(fks)}]"
+            table_docs.append({"table": t_name, "summary": summary})
+
+        if hasattr(store, "index_tables") and table_docs:
+            store.index_tables(table_docs)
+
+        # 2. Prepare column documents
+        col_docs = []
+        for t_name, t_info in tables.items():
+            pks = set(t_info.get("primary_keys", []))
+            for c_name, c_info in t_info.get("columns", {}).items():
+                c_type = c_info.get("type", "")
+                c_desc = c_info.get("description", "").strip()
+                is_pk = c_info.get("is_pk", c_name in pks)
+                is_fk = c_info.get("is_fk", False)
+
+                sig_parts = [f"Table: {t_name}", f"Column: {c_name}"]
+                if c_type:
+                    sig_parts.append(f"Type: {c_type}")
+                if is_pk:
+                    sig_parts.append("Primary Key")
+                if is_fk:
+                    sig_parts.append("Foreign Key")
+                if c_desc:
+                    sig_parts.append(f"Description: {c_desc}")
+
+                signature = ", ".join(sig_parts)
+                col_docs.append({
+                    "table": t_name,
+                    "column": c_name,
+                    "type": c_type,
+                    "description": c_desc,
+                    "is_pk": is_pk,
+                    "is_fk": is_fk,
+                    "signature": signature
+                })
+
+        if hasattr(store, "index_columns") and col_docs:
+            store.index_columns(col_docs)
+
+    @classmethod
     def _seed_if_empty(cls, store: Any) -> None:
-        """Seeds the store with data/few_shot_examples.json if it is currently empty."""
+        """Seeds the store with few-shot examples and schema vectors if empty."""
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        # 1. Seed few-shot SQL examples
         try:
             if hasattr(store, "few_shot_index") and getattr(store.few_shot_index, "ntotal", 0) == 0:
-                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 seed_path = os.path.join(base_dir, "data", "few_shot_examples.json")
                 if os.path.exists(seed_path):
                     import json
                     with open(seed_path, "r", encoding="utf-8") as f:
                         seeds = json.load(f)
                     store.add_few_shots(seeds)
+        except Exception:
+            pass
+
+        # 2. Seed schema tables & columns index
+        try:
+            if hasattr(store, "table_index") and getattr(store.table_index, "ntotal", 0) == 0:
+                schema_path = os.path.join(base_dir, "data", "schema_knowledge.json")
+                if os.path.exists(schema_path):
+                    import json
+                    with open(schema_path, "r", encoding="utf-8") as f:
+                        schema_data = json.load(f)
+                    cls.index_database_schema(store, schema_data)
         except Exception:
             pass
 

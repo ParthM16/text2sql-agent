@@ -48,6 +48,8 @@ docs/
 Text2SQL_Copart_Upgrade_Spec.md
 UPGRADE_TRACKER.md
 BENCHMARK_REPORT.md
+Execution analysis pics/
+node_architecture_analysis.md
 
 # ─── Exports & Scratch ──────────────────────────
 export/
