@@ -29,6 +29,7 @@ data/*.xlsx
 data/*.xls
 data/cache/
 data/chroma_db/
+data/benchmark_results.*
 data/query_history.json
 data/schema_knowledge.json
 !data/few_shot_examples.json
