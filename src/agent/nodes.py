@@ -304,6 +304,13 @@ class AgentNodes:
         - If the query is a **non-aggregated** query (no GROUP BY, no SUM/AVG), and the schema has context columns (currency, unit, symbol), include them in SELECT for transparency.
         - If the query **uses aggregation** (GROUP BY, SUM, AVG, COUNT), **do NOT include any context columns**. The CLEAN AGGREGATION rule above takes absolute priority.
         
+        DATABASE METADATA & SCHEMA INTROSPECTION RULES:
+        - If the user explicitly asks for database metadata (e.g. listing table names, column names in JSON, or record counts per table across the database):
+          * For MS SQL Server (T-SQL): You ARE PERMITTED to query standard system catalog views (`sys.tables`, `sys.columns`, `sys.partitions`) using `FOR JSON PATH`.
+            Example:
+            SELECT t.name AS table_name, (SELECT c.name AS [column] FROM sys.columns c WHERE c.object_id = t.object_id FOR JSON PATH) AS columns_json, SUM(p.rows) AS record_count FROM sys.tables t JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1) GROUP BY t.name, t.object_id ORDER BY t.name;
+          * Do NOT trigger NOT_FOUND for database-wide schema or table inventory requests.
+
         Generate a query to answer this user request:
         "{query}"
         

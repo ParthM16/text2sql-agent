@@ -28,5 +28,10 @@
     "query": "how data or schema look like?",
     "sql": "\nSELECT customer_code, custmer_name, customer_type\nFROM customers\n",
     "note": "Learned from error: Auto-Corrected execution"
+  },
+  {
+    "query": "only list table names and in second column correspondence in json format in each cell list all column names for particular table name and number if records in 3rd column. for that table",
+    "sql": "SELECT t.name AS table_name, (SELECT c.name AS [column] FROM sys.columns c WHERE c.object_id = t.object_id FOR JSON PATH) AS columns_json, SUM(p.rows) AS record_count FROM sys.tables t JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1) GROUP BY t.name, t.object_id ORDER BY t.name;",
+    "note": "System catalog metadata query with JSON columns and table row counts"
   }
 ]

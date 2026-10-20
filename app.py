@@ -80,7 +80,16 @@ def load_vector_store(backend: str = "faiss"):
 # ── Hot-Reload .env Configuration ────────────────────────────
 # Allows changing GEMINI_MODEL, LLM_PROVIDER, or VECTOR_BACKEND in .env
 # and having changes take effect immediately on browser refresh without restarting server.
-config.reload()
+import importlib
+try:
+    import src.config
+    src.config = importlib.reload(src.config)
+    config = src.config.config
+except Exception:
+    pass
+
+if hasattr(config, "reload"):
+    config.reload()
 
 # ── Session State Initialization ─────────────────────────────
 if "db_helper" not in st.session_state:
