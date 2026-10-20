@@ -77,13 +77,17 @@ def get_db_helper(): return DBHelper()
 def load_vector_store(backend: str = "faiss"):
     return get_vector_store(backend=backend)
 
-# ── Hot-Reload .env Configuration ────────────────────────────
-# Allows changing GEMINI_MODEL, LLM_PROVIDER, or VECTOR_BACKEND in .env
-# and having changes take effect immediately on browser refresh without restarting server.
+# ── Hot-Reload .env Configuration & Agent Modules ─────────────
+# Allows changing .env or agent prompt rules and having them
+# take effect immediately on browser refresh without restarting server.
 import importlib
 try:
     import src.config
+    import src.agent.nodes
+    import src.agent.workflow
     src.config = importlib.reload(src.config)
+    src.agent.nodes = importlib.reload(src.agent.nodes)
+    src.agent.workflow = importlib.reload(src.agent.workflow)
     config = src.config.config
 except Exception:
     pass
@@ -106,6 +110,14 @@ if "agent" not in st.session_state:
         st.session_state.vector_store,
         llm_provider=st.session_state.llm_provider
     )
+else:
+    # Keep agent nodes synced with the latest nodes.py prompt logic
+    try:
+        st.session_state.agent.nodes = src.agent.nodes.AgentNodes(
+            model_name=st.session_state.get("llm_provider", config.DEFAULT_LLM_PROVIDER)
+        )
+    except Exception:
+        pass
 
 # Detect if model/backend was changed in .env and auto-sync session state
 if "configured_llm_provider" not in st.session_state:
