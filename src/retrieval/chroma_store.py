@@ -16,6 +16,7 @@ import chromadb
 from chromadb.config import Settings
 
 from src.retrieval.embeddings import get_embedding_model
+from src.config import config
 
 
 class _IndexProxy:
@@ -37,20 +38,15 @@ class ChromaVectorStore:
     def __init__(
         self,
         persist_directory: Optional[str] = None,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: Optional[str] = None,
         encoder: Optional[Any] = None,
     ):
-        # Resolve persistence directory
-        if persist_directory is None:
-            # Default to text2sql_agent/data/chroma_db
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            self.persist_directory = os.path.join(base_dir, "data", "chroma_db")
-        else:
-            self.persist_directory = persist_directory
-
+        # Resolve persistence directory from centralized config
+        self.persist_directory = persist_directory or config.CHROMA_PERSIST_DIR
         os.makedirs(self.persist_directory, exist_ok=True)
 
         # 🧠 Singleton embedding model — share existing instance across backends
+        model_name = model_name or config.EMBEDDING_MODEL_NAME
         if encoder is not None:
             self.encoder = encoder
         else:
@@ -234,10 +230,10 @@ class ChromaVectorStore:
                 query_embeddings=query_emb,
                 n_results=1
             )
-            # L2 distance < 0.3 on normalized embeddings corresponds to ~85%+ semantic match
+            # L2 distance threshold from centralized config (default < 0.3)
             if results and results.get("distances") and results["distances"][0]:
                 dist = results["distances"][0][0]
-                if dist < 0.3:
+                if dist < config.DEDUP_DISTANCE_THRESHOLD:
                     is_duplicate = True
                     duplicate_id = results["ids"][0][0]
                     doc_query = results["documents"][0][0]

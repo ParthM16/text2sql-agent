@@ -11,6 +11,7 @@ from google import genai
 
 from src.agent.exceptions import LLMError
 from src.utils.logger import get_logger
+from src.config import config
 
 
 class AgentNodes:
@@ -19,7 +20,7 @@ class AgentNodes:
     def __init__(self, model_name: str = None, router=None):
         from src.llm.model_router import LLMRouter
 
-        self.model_name = model_name or os.getenv("LLM_PROVIDER", "gemini-2.5-flash").strip()
+        self.model_name = model_name or config.DEFAULT_LLM_PROVIDER
         self.logger = get_logger(__name__)
         self.router = router or LLMRouter(default_provider=self.model_name)
         # Expose self.client for backward compatibility

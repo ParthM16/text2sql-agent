@@ -13,6 +13,7 @@ import os
 import hashlib
 from typing import Optional, Union, Any
 from src.retrieval.embeddings import get_embedding_model, register_embedding_model
+from src.config import config
 
 
 class VectorStoreFactory:
@@ -25,14 +26,14 @@ class VectorStoreFactory:
     def get_vector_store(
         cls,
         backend: Optional[str] = None,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: Optional[str] = None,
         **kwargs
     ) -> Any:
         """Returns the configured vector store backend.
         
         Args:
-            backend: "faiss" or "chroma". If None, reads from VECTOR_BACKEND env var (default: "faiss").
-            model_name: Embedding model name (default: "all-MiniLM-L6-v2").
+            backend: "faiss" or "chroma". If None, reads from config.DEFAULT_VECTOR_BACKEND.
+            model_name: Embedding model name. If None, reads from config.EMBEDDING_MODEL_NAME.
             **kwargs: Extra parameters passed to the store constructor (e.g. persist_directory).
             
         Returns:
@@ -42,10 +43,8 @@ class VectorStoreFactory:
         from src.retrieval.vector_store import VectorStore
         from src.retrieval.chroma_store import ChromaVectorStore
 
-        if not backend:
-            backend = os.getenv("VECTOR_BACKEND", "faiss").strip().lower()
-        else:
-            backend = backend.strip().lower()
+        backend = (backend or config.DEFAULT_VECTOR_BACKEND).strip().lower()
+        model_name = model_name or config.EMBEDDING_MODEL_NAME
 
         if backend in ("chroma", "chromadb"):
             if cls._chroma_instance is None:

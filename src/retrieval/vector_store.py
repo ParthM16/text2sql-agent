@@ -8,12 +8,14 @@ Handles:
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from src.config import config
 
 
 class VectorStore:
     """Manages FAISS vector indexes for few-shot retrieval and typo correction."""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", encoder=None):
+    def __init__(self, model_name: str = None, encoder=None):
+        model_name = model_name or config.EMBEDDING_MODEL_NAME
         if encoder is not None:
             self.encoder = encoder
         else:
@@ -90,8 +92,8 @@ class VectorStore:
         if self.few_shot_index.ntotal > 0:
             query_emb = self.encoder.encode([query])
             D, I = self.few_shot_index.search(np.array(query_emb).astype("float32"), 1)
-            # L2 distance < 0.3 on normalized vectors usually means > 85% semantic match
-            if D[0][0] < 0.3: 
+            # L2 distance threshold from centralized config (default < 0.3)
+            if D[0][0] < config.DEDUP_DISTANCE_THRESHOLD: 
                  is_duplicate = True
                  duplicate_idx = I[0][0]
                  # Update in-memory mapping

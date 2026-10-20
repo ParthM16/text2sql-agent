@@ -12,23 +12,19 @@ import time
 from typing import Optional, Dict, Any, Tuple
 from src.agent.exceptions import LLMError
 from src.utils.logger import get_logger
+from src.config import config
 
 logger = get_logger(__name__)
 
 # Standard Commercial Pricing Reference (USD per 1,000,000 tokens)
-PRICING_TABLE = {
-    "gemini-2.5-flash": {"input_per_m": 0.075, "output_per_m": 0.30},
-    "gpt-4o-mini": {"input_per_m": 0.15, "output_per_m": 0.60},
-    "claude-3-5-haiku": {"input_per_m": 0.80, "output_per_m": 4.00},
-    "ollama-local": {"input_per_m": 0.0, "output_per_m": 0.0},
-}
+PRICING_TABLE = config.MODEL_PRICING
 
 
 class LLMRouter:
     """Routes LLM inference requests to configured cloud or local providers."""
 
     def __init__(self, default_provider: Optional[str] = None):
-        self.default_provider = default_provider or os.getenv("LLM_PROVIDER", "gemini-2.5-flash").strip()
+        self.default_provider = default_provider or config.DEFAULT_LLM_PROVIDER
         self._gemini_client = None
         self._init_gemini_client()
 
@@ -36,24 +32,9 @@ class LLMRouter:
         """Initializes the google-genai client for Gemini/Vertex AI mode."""
         try:
             from google import genai
-            project_id = os.getenv("PROJECT_ID", "").strip()
-            location = os.getenv("LOCATION", "us-central1").strip()
-            
-            gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-            google_key = os.getenv("GOOGLE_API_KEY", "").strip()
-            api_key = gemini_key or google_key
-            if api_key == "your_api_key_here":
-                api_key = ""
-
-            # Prevent google-genai SDK warning:
-            # "Both GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY."
-            # and ensure duplicate env vars in memory do not cause stale key lookups:
-            if gemini_key and google_key:
-                os.environ.pop("GOOGLE_API_KEY", None)
-                os.environ["GEMINI_API_KEY"] = api_key
-            elif api_key:
-                os.environ["GEMINI_API_KEY"] = api_key
-                os.environ.pop("GOOGLE_API_KEY", None)
+            project_id = config.PROJECT_ID
+            location = config.LOCATION
+            api_key = config.GEMINI_API_KEY
 
             if project_id:
                 try:
@@ -105,18 +86,18 @@ class LLMRouter:
 
         try:
             response = self._gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=config.GEMINI_MODEL,
                 contents=full_prompt,
             )
         except Exception as e:
             # If Vertex AI failed due to billing/permissions, attempt fallback to Gemini API Key if set
-            api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+            api_key = config.GEMINI_API_KEY
             if api_key and api_key != "your_api_key_here":
                 try:
                     from google import genai
                     fallback_client = genai.Client(api_key=api_key)
                     response = fallback_client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model=config.GEMINI_MODEL,
                         contents=full_prompt,
                     )
                     self._gemini_client = fallback_client
@@ -189,7 +170,7 @@ class LLMRouter:
         Returns:
             Dictionary matching the standardized upgrade specification.
         """
-        provider = (model_provider or self.default_provider or "gemini-2.5-flash").strip()
+        provider = (model_provider or self.default_provider or config.GEMINI_MODEL).strip()
         start_time = time.perf_counter()
         fallback_used = False
         fallback_message = None
@@ -206,7 +187,7 @@ class LLMRouter:
                 parts = provider.split(":", 1)
                 model_name = parts[1] if parts[0].lower() == "ollama" else provider
             else:
-                model_name = "qwen2.5-coder:3b"
+                model_name = config.OLLAMA_MODEL
 
             try:
                 text, input_tokens, output_tokens = self._generate_ollama(
@@ -216,10 +197,11 @@ class LLMRouter:
                 )
             except Exception as e:
                 # 🧠 Graceful Fallback: Switch to Gemini if Ollama is unreachable
-                logger.warning(f"Ollama local model '{model_name}' unreachable ({e}). Safely falling back to Gemini 2.5 Flash...")
+                gemini_fallback = config.GEMINI_MODEL
+                logger.warning(f"Ollama local model '{model_name}' unreachable ({e}). Safely falling back to Gemini ({gemini_fallback})...")
                 fallback_used = True
-                fallback_message = f"Local Ollama ({model_name}) was unreachable ({e}). Safely fell back to Gemini 2.5 Flash."
-                provider = "gemini-2.5-flash"
+                fallback_message = f"Local Ollama ({model_name}) was unreachable ({e}). Safely fell back to Gemini ({gemini_fallback})."
+                provider = gemini_fallback
                 try:
                     text, input_tokens, output_tokens = self._generate_gemini(
                         prompt=prompt,
@@ -241,14 +223,15 @@ class LLMRouter:
             except Exception as e:
                 # 🧠 Graceful Fallback: Switch to local Ollama if Gemini fails
                 err_detail = str(e)
-                print(f"[FALLBACK] Gemini API call failed: {err_detail}. Gracefully falling back to local Ollama (qwen2.5-coder:3b)...", flush=True)
-                logger.warning(f"Gemini API call failed ({err_detail}). Gracefully falling back to local Ollama (qwen2.5-coder:3b)...")
+                ollama_fallback = config.OLLAMA_MODEL
+                print(f"[FALLBACK] Gemini API call failed: {err_detail}. Gracefully falling back to local Ollama ({ollama_fallback})...", flush=True)
+                logger.warning(f"Gemini API call failed ({err_detail}). Gracefully falling back to local Ollama ({ollama_fallback})...")
                 fallback_used = True
-                fallback_message = f"Gemini API unavailable ({err_detail}). Gracefully fell back to local Ollama (qwen2.5-coder:3b)."
-                provider = "ollama/qwen2.5-coder:3b"
+                fallback_message = f"Gemini API unavailable ({err_detail}). Gracefully fell back to local Ollama ({ollama_fallback})."
+                provider = f"ollama/{ollama_fallback}"
                 try:
                     text, input_tokens, output_tokens = self._generate_ollama(
-                        model_name="qwen2.5-coder:3b",
+                        model_name=ollama_fallback,
                         prompt=prompt,
                         system_instruction=system_instruction
                     )
@@ -275,11 +258,11 @@ class LLMRouter:
             "response_tokens": output_tokens,
             "estimated_cost_usd": actual_cost,
             "cost_comparison_usd": {
-                "gemini-2.5-flash (free tier)": 0.0,
-                "gemini-2.5-flash (nominal)": cost_comparisons.get("gemini-2.5-flash", 0.0),
+                f"{config.GEMINI_MODEL} (free tier)": 0.0,
+                f"{config.GEMINI_MODEL} (nominal)": cost_comparisons.get(config.GEMINI_MODEL, 0.0),
                 "ollama-local": 0.0,
                 "gpt-4o-mini (est)": cost_comparisons.get("gpt-4o-mini", 0.0),
-                "claude-3-5-haiku (est)": cost_comparisons.get("claude-3-5-haiku", 0.0),
+                "claude-3-5-haiku (est)": cost_comparisons.get("claude-3-5-haiku", cost_comparisons.get("claude-3.5-haiku", 0.0)),
             },
             "fallback_used": fallback_used,
             "fallback_message": fallback_message

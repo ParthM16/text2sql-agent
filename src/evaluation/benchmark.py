@@ -20,6 +20,7 @@ import pandas as pd
 
 from src.retrieval.store_factory import VectorStoreFactory
 from src.llm.model_router import LLMRouter
+from src.config import config
 
 
 class ModelBenchmark:
@@ -83,7 +84,7 @@ class ModelBenchmark:
         Returns:
             Dictionary containing raw results and aggregated summaries.
         """
-        models = models or ["ollama/qwen2.5-coder:3b", "gemini-2.5-flash"]
+        models = models or [f"ollama/{config.OLLAMA_MODEL}", config.GEMINI_MODEL]
         backends = backends or ["faiss", "chroma"]
 
         queries = test_queries or self.DEFAULT_TEST_QUERIES
@@ -303,7 +304,7 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-Model & Vector DB Benchmark Suite")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of test queries (e.g. 2 for quick run)")
     parser.add_argument("--delay", type=float, default=5.0, help="Sleep delay in seconds between Gemini queries (Rate-limit guard)")
-    parser.add_argument("--models", nargs="+", default=["ollama/qwen2.5-coder:3b", "gemini-2.5-flash"], help="Models to benchmark")
+    parser.add_argument("--models", nargs="+", default=[f"ollama/{config.OLLAMA_MODEL}", config.GEMINI_MODEL], help="Models to benchmark")
     parser.add_argument("--backends", nargs="+", default=["faiss", "chroma"], help="Vector backends to benchmark")
     args = parser.parse_args()
 

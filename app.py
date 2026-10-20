@@ -17,6 +17,7 @@ from src.db.helper import DBHelper
 from src.retrieval import get_vector_store
 from src.agent.workflow import TextToSQLAgent
 from src.utils.disk_cache import clean_old_cache, save_to_cache
+from src.config import config
 from datetime import datetime
 import time
 import streamlit.components.v1 as components
@@ -80,11 +81,11 @@ def load_vector_store(backend: str = "faiss"):
 if "db_helper" not in st.session_state:
     st.session_state.db_helper = get_db_helper()
 if "vector_backend" not in st.session_state:
-    st.session_state.vector_backend = os.getenv("VECTOR_BACKEND", "faiss").lower()
+    st.session_state.vector_backend = config.DEFAULT_VECTOR_BACKEND
 if "vector_store" not in st.session_state:
     st.session_state.vector_store = load_vector_store(st.session_state.vector_backend)
 if "llm_provider" not in st.session_state:
-    st.session_state.llm_provider = os.getenv("LLM_PROVIDER", "gemini-2.5-flash").strip()
+    st.session_state.llm_provider = config.DEFAULT_LLM_PROVIDER
 if "agent" not in st.session_state:
     st.session_state.agent = TextToSQLAgent(
         st.session_state.db_helper,
@@ -113,7 +114,7 @@ db_mode = st.session_state.db_helper.mode
 if db_mode == "sqlite" and st.session_state.db_helper.sqlite_engine:
     st.info("🟡 **Active file:** CSV/Excel uploaded (in-memory SQLite)")
 elif db_mode == "sqlserver":
-    st.success(f"🟢 **Connected:** SQL Server — {os.getenv('DB_DATABASE_NAME', 'RetailDB')}")
+    st.success(f"🟢 **Connected:** SQL Server — {config.DB_DATABASE_NAME}")
 
 # ── Sidebar ──────────────────────────────────────────────────
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -151,12 +152,9 @@ with st.sidebar:
     st.markdown("---")
     st.header("3. AI & Vector Engine")
 
-    # Step 5.1: LLM Provider Dropdown
-    LLM_OPTIONS = {
-        "Gemini 2.5 Flash (Cloud Free Tier)": "gemini-2.5-flash",
-        "Ollama Local (qwen2.5-coder:3b)": "ollama/qwen2.5-coder:3b"
-    }
-    cur_provider = getattr(st.session_state.agent.nodes, "model_name", st.session_state.get("llm_provider", "gemini-2.5-flash"))
+    # Step 5.1: LLM Provider Dropdown (Driven from Central Config)
+    LLM_OPTIONS = config.UI_MODEL_OPTIONS
+    cur_provider = getattr(st.session_state.agent.nodes, "model_name", st.session_state.get("llm_provider", config.DEFAULT_LLM_PROVIDER))
     provider_labels = list(LLM_OPTIONS.keys())
     default_provider_idx = 0
     for idx, lbl in enumerate(provider_labels):
@@ -168,7 +166,7 @@ with st.sidebar:
         "🤖 LLM Provider",
         provider_labels,
         index=default_provider_idx,
-        help="Choose inference provider. Google Gemini 2.5 Flash (Cloud Free Tier) or 100% Local Ollama ($0.00 spend)."
+        help=f"Choose inference provider. Google Gemini ({config.GEMINI_MODEL}) or 100% Local Ollama ({config.OLLAMA_MODEL}) with $0.00 spend."
     )
     selected_provider = LLM_OPTIONS[selected_provider_lbl]
     if st.session_state.agent.nodes.model_name != selected_provider:
@@ -177,12 +175,9 @@ with st.sidebar:
         st.session_state.llm_provider = selected_provider
         st.toast(f"Active LLM: {selected_provider}", icon="🤖")
 
-    # Step 5.2: Vector Database Toggle
-    VECTOR_OPTIONS = {
-        "FAISS (In-Memory L2)": "faiss",
-        "ChromaDB (Persistent Local)": "chroma"
-    }
-    cur_backend = st.session_state.get("vector_backend", "faiss")
+    # Step 5.2: Vector Database Toggle (Driven from Central Config)
+    VECTOR_OPTIONS = config.UI_VECTOR_OPTIONS
+    cur_backend = st.session_state.get("vector_backend", config.DEFAULT_VECTOR_BACKEND)
     backend_labels = list(VECTOR_OPTIONS.keys())
     default_backend_idx = 1 if cur_backend in ("chroma", "chromadb") else 0
 
@@ -286,18 +281,18 @@ def render_telemetry_expander(telemetry: dict, msg_id: any = None):
 
         # 2. Multi-Model Commercial Cost Simulation Table
         st.markdown("**💡 Simulated Multi-Model Cost Comparison (Per Query & Projected)**")
-        gemini_cost = costs.get("gemini-2.5-flash", 0.0)
+        gemini_cost = costs.get(config.GEMINI_MODEL, costs.get("gemini-3.8-flash", costs.get("gemini-2.5-flash", 0.0)))
         gpt_cost = costs.get("gpt-4o-mini", 0.0)
-        claude_cost = costs.get("claude-3-5-haiku", 0.0)
+        claude_cost = costs.get("claude-3-5-haiku", costs.get("claude-3.5-haiku", 0.0))
 
         cost_rows = [
-            {"Model": "Local Ollama (Qwen2.5-Coder:3b)", "Infra / Tier": "Local Compute (VRAM/RAM)", "Cost / Query": "$0.000000", "Cost / 1K Queries": "$0.0000", "Active Status": "Active ($0.00)" if "ollama" in model.lower() else "Available"},
-            {"Model": "Google Gemini 2.5 Flash", "Infra / Tier": "Google AI Studio Free Tier", "Cost / Query": "$0.000000*", "Cost / 1K Queries": f"${gemini_cost * 1000:.4f} (equiv)", "Active Status": "Active ($0.00)" if "gemini" in model.lower() else "Available"},
+            {"Model": f"Local Ollama ({config.OLLAMA_MODEL})", "Infra / Tier": "Local Compute (VRAM/RAM)", "Cost / Query": "$0.000000", "Cost / 1K Queries": "$0.0000", "Active Status": "Active ($0.00)" if "ollama" in model.lower() else "Available"},
+            {"Model": f"Google Gemini ({config.GEMINI_MODEL})", "Infra / Tier": "Google AI Studio Free Tier", "Cost / Query": "$0.000000*", "Cost / 1K Queries": f"${gemini_cost * 1000:.4f} (equiv)", "Active Status": "Active ($0.00)" if "gemini" in model.lower() else "Available"},
             {"Model": "OpenAI GPT-4o-mini", "Infra / Tier": "Commercial Cloud API", "Cost / Query": f"${gpt_cost:.6f}", "Cost / 1K Queries": f"${gpt_cost * 1000:.4f}", "Active Status": "Simulated"},
             {"Model": "Anthropic Claude 3.5 Haiku", "Infra / Tier": "Commercial Cloud API", "Cost / Query": f"${claude_cost:.6f}", "Cost / 1K Queries": f"${claude_cost * 1000:.4f}", "Active Status": "Simulated"}
         ]
         st.dataframe(pd.DataFrame(cost_rows), hide_index=True, width="stretch")
-        st.caption("* Google Gemini 2.5 Flash is 100% free within the 15 RPM / 1,500 RPD free-tier quota.")
+        st.caption(f"* Google Gemini ({config.GEMINI_MODEL}) is 100% free within the rate limits.")
 
 
 # ── Visual Rendering Engine ──────────────────────────────────

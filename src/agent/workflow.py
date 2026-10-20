@@ -16,6 +16,7 @@ from src.db.helper import DBHelper
 from src.retrieval import get_vector_store
 from src.utils.metrics import PersistentMetrics, SessionMetrics
 from src.utils.logger import get_logger
+from src.config import config
 
 
 class TextToSQLAgent:
@@ -71,11 +72,11 @@ class TextToSQLAgent:
                 _, cost_comparisons = self.nodes.router._calculate_costs(
                     tokens_agg.get("prompt_tokens", 0),
                     tokens_agg.get("response_tokens", 0),
-                    getattr(self.nodes, "model_name", "gemini-2.5-flash")
+                    getattr(self.nodes, "model_name", config.DEFAULT_LLM_PROVIDER)
                 )
             self.last_telemetry = {
-                "model_provider": getattr(self.nodes, "model_name", "gemini-2.5-flash"),
-                "vector_backend": getattr(self.vs, "backend", "faiss"),
+                "model_provider": getattr(self.nodes, "model_name", config.DEFAULT_LLM_PROVIDER),
+                "vector_backend": getattr(self.vs, "backend", config.DEFAULT_VECTOR_BACKEND),
                 "total_time_sec": total_time_sec,
                 "retrieval_latency_ms": retrieval_ms,
                 "tokens_used": tokens_agg,
