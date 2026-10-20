@@ -164,7 +164,8 @@ class TextToSQLAgent:
             "DELETE", "FROM", "RECORD", "RECORDS", "INSERT", "INTO",
             "UPDATE", "SET", "CREATE",
             "ALTER", "TRUNCATE", "IGNORE", "PREVIOUS", "SYSTEM", "PROMPT", "BYPASS", "INSTRUCTIONS",
-            "EXEC", "EXECUTE", "GRANT", "REVOKE"
+            "EXEC", "EXECUTE", "GRANT", "REVOKE",
+            "MODIFY", "MODIFIES", "MODIFYING", "CHANGE"
         ]
         
         corrected_words = []
@@ -172,7 +173,9 @@ class TextToSQLAgent:
             clean_original = ''.join(c for c in w if c.isalnum())
             clean_w = clean_original.upper()
             if len(clean_w) > 2 and clean_w not in critical_keywords:
-                matches = difflib.get_close_matches(clean_w, critical_keywords, n=1, cutoff=0.85)
+                # Candidates must share the initial character and have length within +/-2
+                cand = [k for k in critical_keywords if k[0] == clean_w[0] and abs(len(k) - len(clean_w)) <= 2]
+                matches = difflib.get_close_matches(clean_w, cand, n=1, cutoff=0.70)
                 if matches:
                     matched_word = matches[0].lower() if w.islower() else matches[0]
                     if clean_original:
@@ -325,7 +328,8 @@ class TextToSQLAgent:
             r"\bINSERT\b\s+(?:\w+\s+)*\bINTO\b": "INSERT OPERATION",
             r"\bUPDATE\b\s+(?:\w+\s+)*\bSET\b": "UPDATE OPERATION",
             r"\bCREATE\b\s+(?:\w+\s+)*\b(?:TABLES?|DATABASES?|VIEWS?)\b": "CREATE OPERATION",
-            r"\bALTER\b\s+(?:\w+\s+)*\bTABLES?\b": "ALTER OPERATION",
+            r"\b(?:ALTER|MODIFY|MODIFIES|MODIFYING|CHANGE)\b\s+(?:\w+\s+)*\b(?:TABLES?|DATABASES?|SCHEMAS?|VIEWS?|COLUMNS?)\b": "MODIFY/ALTER OPERATION",
+            r"\b(?:TABLES?|DATABASES?|SCHEMAS?|VIEWS?|COLUMNS?)\b\s+(?:\w+\s+)*\b(?:MODIFY|MODIFIES|MODIFYING|MODIFICATION|ALTER)\b": "MODIFY/ALTER OPERATION",
             r"\bTRUNCATE\b\s+(?:\w+\s+)*\bTABLES?\b": "TRUNCATE OPERATION",
             r"IGNORE ALL PREVIOUS": "PROMPT INJECTION", 
             r"FORGET ALL": "PROMPT INJECTION", 
@@ -342,7 +346,7 @@ class TextToSQLAgent:
         # 3. Strict Single-Word DML/DDL Check (avoiding common English words like DROP, CREATE, UPDATE)
         if not blocked_reason:
             tokens = set(re.findall(r"\b[A-Z]+\b", trimmed_upper))
-            strict_words = {"DELETE", "INSERT", "TRUNCATE", "EXEC", "EXECUTE", "GRANT", "REVOKE", "ALTER"}
+            strict_words = {"DELETE", "INSERT", "TRUNCATE", "EXEC", "EXECUTE", "GRANT", "REVOKE", "ALTER", "MODIFY"}
             found = tokens & strict_words
             if found:
                 blocked_reason = next(iter(found))
