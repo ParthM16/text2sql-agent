@@ -288,10 +288,13 @@ class DBHelper:
             # Determine which columns to include
             if table_to_columns and table_name in table_to_columns:
                 target_cols = [c for c in table_to_columns[table_name] if c in all_cols]
-                # Always ensure primary keys are present in pruned columns
-                for pk in pks:
-                    if pk in all_cols and pk not in target_cols:
-                        target_cols.insert(0, pk)
+                # Always ensure anchor columns (PKs, FKs, Date/Time columns) are preserved
+                fks = [c for c, c_meta in all_cols.items() if c_meta.get("is_fk")]
+                date_cols = [c for c in all_cols.keys() if any(k in c.lower() for k in ("date", "time", "year"))]
+                anchors = list(dict.fromkeys(list(pks) + fks + date_cols))
+                for anchor in anchors:
+                    if anchor in all_cols and anchor not in target_cols:
+                        target_cols.append(anchor)
                 is_pruned = len(target_cols) < total_col_count
             else:
                 target_cols = list(all_cols.keys())
@@ -434,6 +437,7 @@ class DBHelper:
             INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
             INNER JOIN sys.columns cp ON fkc.parent_object_id = cp.object_id AND fkc.parent_column_id = cp.column_id
             INNER JOIN sys.columns cr ON fkc.referenced_object_id = cr.object_id AND fkc.referenced_column_id = cr.column_id
+            WHERE SCHEMA_NAME(tp.schema_id) = 'dbo' AND SCHEMA_NAME(tr.schema_id) = 'dbo'
             """
             try:
                 col_df = pd.read_sql(query_cols, engine)

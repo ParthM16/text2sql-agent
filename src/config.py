@@ -53,7 +53,7 @@ class AppConfig:
         Default Gemini model name (default: 'gemini-3.8-flash').
         Override via GEMINI_MODEL in .env (e.g. 'gemini-3.8-flash', 'gemini-3.5-flash-lite').
         """
-        return os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+        return os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.8-flash"
 
     @property
     def OLLAMA_MODEL(self) -> str:
@@ -61,12 +61,12 @@ class AppConfig:
         Default Ollama model name (default: 'qwen2.5-coder:3b').
         Override via OLLAMA_MODEL in .env (e.g. 'qwen2.5-coder:3b', 'llama3.2:3b').
         """
-        return os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b").strip()
+        return os.getenv("OLLAMA_MODEL", "").strip() or "qwen2.5-coder:3b"
 
     @property
     def OLLAMA_BASE_URL(self) -> str:
         """Base URL for local Ollama server."""
-        return os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+        return os.getenv("OLLAMA_BASE_URL", "").strip() or "http://localhost:11434"
 
     @property
     def DEFAULT_LLM_PROVIDER(self) -> str:
@@ -109,12 +109,13 @@ class AppConfig:
     @property
     def DEFAULT_VECTOR_BACKEND(self) -> str:
         """Default vector store backend ('faiss' or 'chroma'). Configurable via VECTOR_BACKEND in .env."""
-        return os.getenv("VECTOR_BACKEND", "faiss").strip().lower()
+        val = os.getenv("VECTOR_BACKEND", "").strip().lower()
+        return val if val else "faiss"
 
     @property
     def EMBEDDING_MODEL_NAME(self) -> str:
         """SentenceTransformers embedding model identifier."""
-        return os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2").strip()
+        return os.getenv("EMBEDDING_MODEL", "").strip() or "sentence-transformers/all-MiniLM-L6-v2"
 
     @property
     def CHROMA_PERSIST_DIR(self) -> str:
