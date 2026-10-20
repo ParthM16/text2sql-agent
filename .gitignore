@@ -20,6 +20,8 @@ service_account.json
 *.swp
 Thumbs.db
 .DS_Store
+*.exe
+*.winmd
 
 # ─── Runtime Data (user-specific) ─────────────────
 data/*.csv
@@ -41,6 +43,9 @@ logs/
 
 # ─── Documentation (internal only) ───────────────
 docs/
+Text2SQL_Copart_Upgrade_Spec.md
+UPGRADE_TRACKER.md
+BENCHMARK_REPORT.md
 
 # ─── Exports & Scratch ──────────────────────────
 export/

@@ -10,3 +10,5 @@ sentence-transformers
 python-dotenv
 google-adk
 langdetect==1.0.9
+chromadb>=0.5.0
+ollama>=0.3.0
