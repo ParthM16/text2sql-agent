@@ -56,6 +56,7 @@ class ChromaVectorStore:
         else:
             self.encoder = get_embedding_model(model_name)
 
+        self.backend = "chroma"
         self.dimension = self.encoder.get_embedding_dimension()
 
         # Initialize persistent ChromaDB client with telemetry disabled for fast, zero-delay local startup

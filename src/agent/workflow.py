@@ -44,6 +44,7 @@ class TextToSQLAgent:
         # Metrics + logger
         self.metrics = SessionMetrics()
         self.logger = get_logger(__name__)
+        self.last_telemetry = None
 
         #  Seed Few-Shot Memory 
         # Addresses Gap Analysis P0: Vector DB starts empty unless seeded
@@ -59,6 +60,32 @@ class TextToSQLAgent:
                         self.logger.info(f"Seeded Vector Store with {len(seeds)} contextual examples.")
         except Exception as e:
             self.logger.warning(f"Could not load few-shot seeds: {e}")
+
+    def _record_telemetry(self, user_query: str, success: bool, overall_start: float, tokens_agg: dict, node_timings: dict, sql: str = None):
+        """Constructs standardized telemetry object for live UI dashboard display."""
+        try:
+            total_time_sec = round(perf_counter() - overall_start, 3)
+            retrieval_ms = round((node_timings.get("04_few_shot", 0.0) + node_timings.get("05_attr_match", 0.0)) * 1000.0, 1)
+            cost_comparisons = {}
+            if hasattr(self.nodes, "router") and hasattr(self.nodes.router, "_calculate_costs"):
+                _, cost_comparisons = self.nodes.router._calculate_costs(
+                    tokens_agg.get("prompt_tokens", 0),
+                    tokens_agg.get("response_tokens", 0),
+                    getattr(self.nodes, "model_name", "gemini-2.5-flash")
+                )
+            self.last_telemetry = {
+                "model_provider": getattr(self.nodes, "model_name", "gemini-2.5-flash"),
+                "vector_backend": getattr(self.vs, "backend", "faiss"),
+                "total_time_sec": total_time_sec,
+                "retrieval_latency_ms": retrieval_ms,
+                "tokens_used": tokens_agg,
+                "node_timings": node_timings,
+                "cost_comparisons": cost_comparisons,
+                "sql": sql,
+                "success": success,
+            }
+        except Exception as e:
+            self.logger.warning(f"Could not construct last_telemetry: {e}")
 
     def run(self, user_query: str, ui_callback=None, app_language="en", stop_event=None) -> tuple[str, list, dict, pd.DataFrame]:
         """Main entry point. Returns (answer_text, log_lines, chart_config, data_frame)."""
@@ -982,6 +1009,7 @@ class TextToSQLAgent:
                 "node_timings": node_timings
             })
             self.metrics.add_query_result(True)
+            self._record_telemetry(user_query, True, overall_start, tokens_agg, node_timings, sql)
             self.logger.info("[Analytics] Persisted 100% complete query state to history.")
         except Exception:
             self.logger.exception("Failed to persist query history")

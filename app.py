@@ -83,8 +83,14 @@ if "vector_backend" not in st.session_state:
     st.session_state.vector_backend = os.getenv("VECTOR_BACKEND", "faiss").lower()
 if "vector_store" not in st.session_state:
     st.session_state.vector_store = load_vector_store(st.session_state.vector_backend)
+if "llm_provider" not in st.session_state:
+    st.session_state.llm_provider = os.getenv("LLM_PROVIDER", "gemini-2.5-flash").strip()
 if "agent" not in st.session_state:
-    st.session_state.agent = TextToSQLAgent(st.session_state.db_helper, st.session_state.vector_store)
+    st.session_state.agent = TextToSQLAgent(
+        st.session_state.db_helper,
+        st.session_state.vector_store,
+        llm_provider=st.session_state.llm_provider
+    )
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "How can I help with your retail data today?"}]
 
@@ -142,7 +148,58 @@ with st.sidebar:
                 # Flush the UUI memory cache so new currencies are detected instantly
                 st.session_state.agent._unit_cache = {}
                 st.success("Agent Knowledge Updated & Unit Cache Cleared!")
-            else: st.error(f"Sync failed: {err}")
+    st.markdown("---")
+    st.header("3. AI & Vector Engine")
+
+    # Step 5.1: LLM Provider Dropdown
+    LLM_OPTIONS = {
+        "Gemini 2.5 Flash (Cloud Free Tier)": "gemini-2.5-flash",
+        "Ollama Local (qwen2.5-coder:3b)": "ollama/qwen2.5-coder:3b"
+    }
+    cur_provider = getattr(st.session_state.agent.nodes, "model_name", st.session_state.get("llm_provider", "gemini-2.5-flash"))
+    provider_labels = list(LLM_OPTIONS.keys())
+    default_provider_idx = 0
+    for idx, lbl in enumerate(provider_labels):
+        if LLM_OPTIONS[lbl].lower() == cur_provider.lower():
+            default_provider_idx = idx
+            break
+
+    selected_provider_lbl = st.selectbox(
+        "🤖 LLM Provider",
+        provider_labels,
+        index=default_provider_idx,
+        help="Choose inference provider. Google Gemini 2.5 Flash (Cloud Free Tier) or 100% Local Ollama ($0.00 spend)."
+    )
+    selected_provider = LLM_OPTIONS[selected_provider_lbl]
+    if st.session_state.agent.nodes.model_name != selected_provider:
+        st.session_state.agent.nodes.model_name = selected_provider
+        st.session_state.agent.nodes.router.default_provider = selected_provider
+        st.session_state.llm_provider = selected_provider
+        st.toast(f"Active LLM: {selected_provider}", icon="🤖")
+
+    # Step 5.2: Vector Database Toggle
+    VECTOR_OPTIONS = {
+        "FAISS (In-Memory L2)": "faiss",
+        "ChromaDB (Persistent Local)": "chroma"
+    }
+    cur_backend = st.session_state.get("vector_backend", "faiss")
+    backend_labels = list(VECTOR_OPTIONS.keys())
+    default_backend_idx = 1 if cur_backend in ("chroma", "chromadb") else 0
+
+    selected_backend_lbl = st.radio(
+        "🗄️ Vector Database",
+        backend_labels,
+        index=default_backend_idx,
+        horizontal=True,
+        help="Switch vector database. Both use the shared SentenceTransformer singleton (zero duplicate RAM)."
+    )
+    selected_backend = VECTOR_OPTIONS[selected_backend_lbl]
+    if st.session_state.get("vector_backend") != selected_backend:
+        st.session_state.vector_backend = selected_backend
+        new_store = load_vector_store(selected_backend)
+        st.session_state.vector_store = new_store
+        st.session_state.agent.vs = new_store
+        st.toast(f"Active Vector DB: {selected_backend.upper()}", icon="🗄️")
 
     st.markdown("---")
     st.markdown("**📊 Session Stats**")
@@ -168,9 +225,84 @@ with st.sidebar:
             PersistentMetrics.clear_query_history()
             st.rerun()
 
+# ── Live Telemetry & Cost Rendering ──────────────────────────
+def render_telemetry_expander(telemetry: dict, msg_id: any = None):
+    """Renders live telemetry, latency breakdown, and simulated multi-model cost trade-offs."""
+    if not telemetry:
+        return
+    with st.expander("⚡ Live Telemetry & Cost Trade-Offs", expanded=False):
+        model = telemetry.get("model_provider", "Unknown")
+        backend = str(telemetry.get("vector_backend", "faiss")).upper()
+        tot_time = telemetry.get("total_time_sec", 0.0)
+        vec_ms = telemetry.get("retrieval_latency_ms", 0.0)
+        tokens = telemetry.get("tokens_used", {})
+        timings = telemetry.get("node_timings", {})
+        costs = telemetry.get("cost_comparisons", {})
+
+        # Top Metric Badges
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("🤖 LLM Engine", model.split("/")[-1])
+        col2.metric("🗄️ Vector Store", f"{backend} ({'Disk' if 'CHROMA' in backend else 'RAM'})")
+        col3.metric("⏱️ Pipeline Time", f"{tot_time:.2f}s")
+        col4.metric("⚡ Vector Latency", f"{vec_ms:.1f} ms")
+
+        # Second row: Tokens & Actual Cost
+        c_tok1, c_tok2, c_tok3, c_tok4 = st.columns(4)
+        c_tok1.metric("📥 Prompt Tokens", f"{tokens.get('prompt_tokens', 0):,}")
+        c_tok2.metric("📤 Response Tokens", f"{tokens.get('response_tokens', 0):,}")
+        c_tok3.metric("🔑 Total Tokens", f"{tokens.get('total_tokens', 0):,}")
+        c_tok4.metric("💰 Actual Cost", "$0.000000")
+
+        st.markdown("---")
+
+        # 1. Pipeline Node Latency Breakdown
+        st.markdown("**⏱️ Pipeline Execution Breakdown**")
+        timing_rows = []
+        node_display_names = {
+            "00_input_guardrail": "Input Guardrail",
+            "01_intent": "Intent Detection",
+            "02_knowledge": "Schema Knowledge",
+            "03_table_selection": "Table Selection",
+            "04_few_shot": "Few-Shot Vector Retrieval",
+            "05_attr_match": "Attribute Correction",
+            "06_sql_generation": "SQL Generation",
+            "07_sql_exec": "SQL Execution",
+            "08_sql_correct": "Self-Correction Loop",
+            "09_chart_config": "Chart Configuration",
+            "10_nlg": "Natural Language Response"
+        }
+        for k, name in node_display_names.items():
+            duration = timings.get(k, 0.0)
+            if duration > 0.001:
+                timing_rows.append({
+                    "Pipeline Stage": name,
+                    "Latency (sec)": f"{duration:.3f}s",
+                    "Share (%)": f"{(duration / tot_time * 100):.1f}%" if tot_time > 0 else "0.0%"
+                })
+        if timing_rows:
+            st.dataframe(pd.DataFrame(timing_rows), hide_index=True, width="stretch")
+
+        st.markdown("---")
+
+        # 2. Multi-Model Commercial Cost Simulation Table
+        st.markdown("**💡 Simulated Multi-Model Cost Comparison (Per Query & Projected)**")
+        gemini_cost = costs.get("gemini-2.5-flash", 0.0)
+        gpt_cost = costs.get("gpt-4o-mini", 0.0)
+        claude_cost = costs.get("claude-3-5-haiku", 0.0)
+
+        cost_rows = [
+            {"Model": "Local Ollama (Qwen2.5-Coder:3b)", "Infra / Tier": "Local Compute (VRAM/RAM)", "Cost / Query": "$0.000000", "Cost / 1K Queries": "$0.0000", "Active Status": "Active ($0.00)" if "ollama" in model.lower() else "Available"},
+            {"Model": "Google Gemini 2.5 Flash", "Infra / Tier": "Google AI Studio Free Tier", "Cost / Query": "$0.000000*", "Cost / 1K Queries": f"${gemini_cost * 1000:.4f} (equiv)", "Active Status": "Active ($0.00)" if "gemini" in model.lower() else "Available"},
+            {"Model": "OpenAI GPT-4o-mini", "Infra / Tier": "Commercial Cloud API", "Cost / Query": f"${gpt_cost:.6f}", "Cost / 1K Queries": f"${gpt_cost * 1000:.4f}", "Active Status": "Simulated"},
+            {"Model": "Anthropic Claude 3.5 Haiku", "Infra / Tier": "Commercial Cloud API", "Cost / Query": f"${claude_cost:.6f}", "Cost / 1K Queries": f"${claude_cost * 1000:.4f}", "Active Status": "Simulated"}
+        ]
+        st.dataframe(pd.DataFrame(cost_rows), hide_index=True, width="stretch")
+        st.caption("* Google Gemini 2.5 Flash is 100% free within the 15 RPM / 1,500 RPD free-tier quota.")
+
+
 # ── Visual Rendering Engine ──────────────────────────────────
 @st.fragment
-def render_visuals(msg_id, chart_config, chart_df, head_df, dl_path, logs):
+def render_visuals(msg_id, chart_config, chart_df, head_df, dl_path, logs, telemetry=None):
     """Renders visualizations in an isolated fragment."""
     if chart_config and chart_df is not None and not chart_df.empty:
         try:
@@ -258,6 +390,9 @@ def render_visuals(msg_id, chart_config, chart_df, head_df, dl_path, logs):
         with st.expander("🧭 Agent Thought Process", expanded=False):
             for l in logs: st.text(l)
 
+    if telemetry:
+        render_telemetry_expander(telemetry, msg_id)
+
 # ── Main Chat Interface ──────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "How can I help with your retail data today?"}]
@@ -269,7 +404,15 @@ with chat_container:
     for i, m in enumerate(st.session_state.messages):
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
-            render_visuals(i, m.get("chart_config"), m.get("chart_df"), m.get("head_df"), m.get("dl_path"), m.get("logs"))
+            render_visuals(
+                i,
+                m.get("chart_config"),
+                m.get("chart_df"),
+                m.get("head_df"),
+                m.get("dl_path"),
+                m.get("logs"),
+                m.get("telemetry")
+            )
 
 
 # ── Chat Input ──
@@ -308,12 +451,14 @@ if prompt:
 
                 # 4. Render the assistant response and visuals
                 st.markdown(ans)
-                render_visuals(len(st.session_state.messages), cfg, c_df, h_df, d_pt, logs)
+                telemetry = getattr(agent_ref, "last_telemetry", None)
+                render_visuals(len(st.session_state.messages), cfg, c_df, h_df, d_pt, logs, telemetry)
 
                 # 5. Save to message history
                 st.session_state.messages.append({
                     "role": "assistant", "content": ans, "logs": logs,
-                    "chart_config": cfg, "chart_df": c_df, "head_df": h_df, "dl_path": d_pt
+                    "chart_config": cfg, "chart_df": c_df, "head_df": h_df, "dl_path": d_pt,
+                    "telemetry": telemetry
                 })
     
     # 6. Final rerun to sync state

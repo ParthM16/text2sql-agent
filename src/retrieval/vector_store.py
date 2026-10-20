@@ -20,6 +20,7 @@ class VectorStore:
             from src.retrieval.embeddings import get_embedding_model
             self.encoder = get_embedding_model(model_name)
 
+        self.backend = "faiss"
         self.dimension = self.encoder.get_embedding_dimension()
 
         # Attribute correction index

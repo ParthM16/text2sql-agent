@@ -59,6 +59,7 @@ class VectorStoreFactory:
                     model_name=model_name,
                     **kwargs
                 )
+                cls._seed_if_empty(cls._chroma_instance)
             return cls._chroma_instance
 
         # Default to FAISS
@@ -72,8 +73,24 @@ class VectorStoreFactory:
                 model_name=model_name,
                 encoder=shared_encoder
             )
+            cls._seed_if_empty(cls._faiss_instance)
 
         return cls._faiss_instance
+
+    @classmethod
+    def _seed_if_empty(cls, store: Any) -> None:
+        """Seeds the store with data/few_shot_examples.json if it is currently empty."""
+        try:
+            if hasattr(store, "few_shot_index") and getattr(store.few_shot_index, "ntotal", 0) == 0:
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                seed_path = os.path.join(base_dir, "data", "few_shot_examples.json")
+                if os.path.exists(seed_path):
+                    import json
+                    with open(seed_path, "r", encoding="utf-8") as f:
+                        seeds = json.load(f)
+                    store.add_few_shots(seeds)
+        except Exception:
+            pass
 
     @classmethod
     def sync_correction_to_counterpart(
