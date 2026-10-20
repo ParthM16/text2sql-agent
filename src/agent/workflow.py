@@ -812,6 +812,7 @@ class TextToSQLAgent:
             else:
                 user_msg = "Internal error generating SQL. Try again later."
                 self.logger.exception("SQL generation failed")
+            self._record_telemetry(user_query, False, overall_start, tokens_agg, node_timings, sql=None)
             try:
                 PersistentMetrics.append_query({
                     "timestamp": pd.Timestamp.now().isoformat(),
@@ -819,8 +820,8 @@ class TextToSQLAgent:
                     "generated_sql": None,
                     "intent": "SQL_GEN_ERROR",
                     "success": False,
-                    "tokens_used": None,
-                    "response_time_ms": None,
+                    "tokens_used": tokens_agg,
+                    "response_time_ms": round((perf_counter() - overall_start) * 1000, 2),
                     "node_timings": node_timings,
                 })
             except Exception:
@@ -830,7 +831,7 @@ class TextToSQLAgent:
         duration = perf_counter() - t0
         node_timings["06_sql_generation"] = duration
 
-        # Intercept NOT_FOUND schema hallucinaton protection
+        # Intercept NOT_FOUND schema hallucination protection
         if sql.startswith("NOT_FOUND:"):
             msg = sql.replace("NOT_FOUND:", "").strip()
             log.append(f"[Node: SQL Generation] Schema missing elements. Agent aborted and asked user for clarification.")
@@ -839,6 +840,16 @@ class TextToSQLAgent:
             # Save context so the user can answer clarification questions
             # We preserve last_results/last_df from the previous success to maintain session memory
             self.last_query = user_query
+
+            if usage:
+                pt = usage.get("prompt_tokens") or 0
+                rt = usage.get("response_tokens") or 0
+                tokens_agg["prompt_tokens"] += pt
+                tokens_agg["response_tokens"] += rt
+                tokens_agg["total_tokens"] += usage.get("total_tokens") or (pt + rt)
+                self.metrics.add_tokens("sql_gen", pt, rt)
+
+            self._record_telemetry(user_query, False, overall_start, tokens_agg, node_timings, sql=None)
             
             try:
                 PersistentMetrics.append_query({
@@ -847,8 +858,8 @@ class TextToSQLAgent:
                     "generated_sql": None,
                     "intent": "MISSING_SCHEMA",
                     "success": False,
-                    "tokens_used": None,
-                    "response_time_ms": None,
+                    "tokens_used": tokens_agg,
+                    "response_time_ms": round((perf_counter() - overall_start) * 1000, 2),
                     "node_timings": node_timings,
                 })
             except Exception:

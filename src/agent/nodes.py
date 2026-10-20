@@ -317,9 +317,8 @@ class AgentNodes:
         Output ONLY the raw SQL query, no markdown blocks, no explanation.
         
         SMART SCHEMA DETECTION:
-        If you realize the user is asking for a column/data point that COMPLETELY DOES NOT EXIST in the schema provided above (e.g. they ask for 'department' but there is no such field), DO NOT hallucinate a query.
-        Instead, output EXACTLY a string starting with "NOT_FOUND:" followed by a smart UI message telling them it's missing, and suggesting 2 or 3 of the closest available columns/tables to help them.
-        Example: "NOT_FOUND: I couldn't find a 'department' field in our sales database. However, I did find 'Market Code' and 'Customer Code'. Would you like me to check any of those?"
+        - If the user explicitly asks for database metadata (e.g., table names, column names, record counts across tables), NEVER output NOT_FOUND. Always generate the requested catalog query.
+        - Only if the user asks for a specific business field or metric that completely does not exist in the database (e.g. employee payroll or warehouse temperature), output a string starting with "NOT_FOUND:" explaining that the requested field was not found in the retail schema, and suggest 2 or 3 of the actual available columns or tables from the schema provided above.
         """
         text, usage = self._generate(prompt)
         
