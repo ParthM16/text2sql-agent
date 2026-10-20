@@ -47,6 +47,40 @@ class AgentNodes:
                          last_sql: str = None, last_results: list = None,
                          last_df: pd.DataFrame = None) -> tuple[str, dict]:
         """Classifies user intent: NEW_QUERY, CHART_REQUEST, FOLLOW_UP, or EXPLORATORY."""
+        import re
+        q_clean = user_query.strip().lower()
+
+        # ── Pre-Guardrail: Analytical Metrics & Dimensions Guard ──
+        # Any query asking for specific business metrics, aggregations, or dimensions is a Data Query (NEW_QUERY / FOLLOW_UP).
+        # It must NEVER be treated as EXPLORATORY unless explicitly asking for meta-schema / bot capabilities.
+        analytical_tokens = [
+            "sales", "revenue", "profit", "qty", "quantity", "amount", "price", "cost", "margin",
+            "month", "year", "quarter", "week", "day", "date", "monthly", "yearly", "weekly",
+            "top", "bottom", "highest", "lowest", "total", "sum", "avg", "average", "count",
+            "wise", "by", "per", "breakdown", "grouped", "trend",
+            "customer", "product", "market", "transaction", "order", "item", "category"
+        ]
+        meta_explore_triggers = [
+            "what can i ask", "what can you do", "help me explore", "what data do i have",
+            "what data is available", "what data do you have", "show tables", "list tables",
+            "what tables", "show schema", "explore database", "what kind of questions", "what insights can",
+            "suggest questions", "suggest queries", "what can i chat"
+        ]
+
+        has_analytical_signal = any(re.search(rf"\b{re.escape(tok)}\b", q_clean) for tok in analytical_tokens) or "wise" in q_clean
+        is_meta_explore = any(trig in q_clean for trig in meta_explore_triggers)
+
+        # Fast path: Clear analytical queries are ALWAYS data queries (NEW_QUERY or FOLLOW_UP / CHART)
+        if has_analytical_signal and not is_meta_explore:
+            if last_query:
+                chart_words = ["chart", "plot", "graph", "visualize", "histogram"]
+                if any(cw in q_clean for cw in chart_words) and len(q_clean.split()) <= 4:
+                    return "CHART_REQUEST", {}
+                follow_words = ["now", "also", "and", "filter", "break down", "only", "what about", "instead"]
+                if any(fw in q_clean for fw in follow_words):
+                    return "FOLLOW_UP", {}
+            return "NEW_QUERY", {}
+
         history_context = ""
         if last_query:
             cols = list(last_df.columns) if last_df is not None else "N/A"
@@ -65,17 +99,20 @@ class AgentNodes:
         The new user message is: "{user_query}"
 
         Classify the intent into EXACTLY one of these four categories:
-        - EXPLORATORY     user is asking what they CAN do, requesting suggestions, exploring capabilities, or asking for help (e.g., "what analysis can I do?", "what data do you have?", "help me explore", "what can you tell me?", "suggest something", "what insights are available?").
+        - EXPLORATORY     ONLY if the user is asking what they CAN do, asking what data/tables exist, or asking for help/suggestions (e.g., "what data do you have?", "what tables exist?", "what can I ask?", "help me explore").
+                          CRITICAL: NEVER classify analytical requests, aggregations, or metric questions (e.g. "sales month wise", "total revenue", "top products", "monthly sales") as EXPLORATORY.
         - CHART_REQUEST   ONLY if the user wants to visualize the EXACT data already seen (e.g., "Chart this", "Make it a graph", "Visualize that data").
         - FOLLOW_UP       user is asking a follow-up about previous results OR wanting new filters/aggregations (e.g. "now show it for 2019", "break this down by region").
-        - NEW_QUERY       user is asking a brand new database question, even if they ask for it in a chart.
+        - NEW_QUERY       user is asking a database question for data, metrics, aggregations, or reports (e.g. "sales month wise", "total sales", "top customers").
 
         Output ONLY the category name. Nothing else.
         """
         text, usage = self._generate(prompt)
         intent = text.upper().replace(" ", "_")
         
-        # Guardrails
+        # Post-Guardrails
+        if ("EXPLOR" in intent) and has_analytical_signal and not is_meta_explore:
+            return "NEW_QUERY", usage
         if "EXPLOR" in intent:
             return "EXPLORATORY", usage
         if "CHART" in intent:

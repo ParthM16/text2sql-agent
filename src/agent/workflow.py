@@ -91,13 +91,14 @@ class TextToSQLAgent:
         """Main entry point. Returns (answer_text, log_lines, chart_config, data_frame)."""
         overall_start = perf_counter()
         log = []
+        usage = {}  # Safe default to prevent UnboundLocalError across all node branches
         
         def notify_ui(msg):
             if ui_callback: ui_callback(msg)
 
         def print_terminal(node_name):
             import time
-            print(f"[\033[94m{time.strftime('%H:%M:%S')}\033[0m] ⏳ Running Node: {node_name}", flush=True)
+            print(f"[\033[94m{time.strftime('%H:%M:%S')}\033[0m] >> Running Node: {node_name}", flush=True)
 
             
         notify_ui("Understanding Request")
@@ -120,9 +121,10 @@ class TextToSQLAgent:
 
         #  Guard: API credentials 
         has_vertex = bool(os.getenv("PROJECT_ID", ""))
-        has_api_key = os.getenv("GOOGLE_API_KEY", "") not in ("", "your_api_key_here")
-        if not has_vertex and not has_api_key:
-            return "Error: No API credentials configured. Set PROJECT_ID (Vertex AI) or GOOGLE_API_KEY in .env.", log, None, None
+        has_api_key = (os.getenv("GEMINI_API_KEY", "") not in ("", "your_api_key_here")) or (os.getenv("GOOGLE_API_KEY", "") not in ("", "your_api_key_here"))
+        is_ollama = "ollama" in getattr(self.nodes, "model_name", "").lower()
+        if not has_vertex and not has_api_key and not is_ollama:
+            return "Error: No API credentials configured. Set GEMINI_API_KEY, GOOGLE_API_KEY, PROJECT_ID (Vertex AI), or select Ollama in .env.", log, None, None
 
         #  Guard: Input validation 
         trimmed = user_query.strip()
@@ -411,9 +413,24 @@ class TextToSQLAgent:
                 tokens_agg["total_tokens"] += usage.get("total_tokens") or (pt + rt)
                 self.metrics.add_tokens("intent", pt, rt)
         else:
-            # No previous context  use fast keyword pre-check for EXPLORATORY
-            explore_kw = ['what can i', 'what analysis', 'help me', 'what data', 'suggest', 'explore', 'what insight', 'what kind']
-            if any(kw in user_query.lower() for kw in explore_kw):
+            # No previous context - use fast keyword pre-check for EXPLORATORY
+            q_clean = user_query.strip().lower()
+            analytical_keywords = [
+                "sales", "revenue", "profit", "qty", "quantity", "amount", "price", "cost", "margin",
+                "month", "year", "quarter", "week", "day", "date", "monthly", "yearly", "weekly",
+                "top", "bottom", "highest", "lowest", "total", "sum", "avg", "average", "count",
+                "wise", "by", "per", "breakdown", "grouped", "trend",
+                "customer", "product", "market", "transaction", "order", "item", "category"
+            ]
+            has_metric = any(re.search(rf"\b{re.escape(k)}\b", q_clean) for k in analytical_keywords) or "wise" in q_clean
+            
+            meta_explore_triggers = [
+                "what can i ask", "what can you do", "help me explore", "what data do i have",
+                "what data is available", "what data do you have", "suggest something", "explore data",
+                "show tables", "list tables", "what tables", "show schema", "explore database",
+                "what kind of questions", "what insights can", "what data to chat"
+            ]
+            if any(trig in q_clean for trig in meta_explore_triggers) and not has_metric:
                 intent = "EXPLORATORY"
                 log.append("[Node: Intent Detection] No context + exploratory keywords detected. Treating as EXPLORATORY.")
             else:
@@ -436,6 +453,7 @@ class TextToSQLAgent:
             log.append("[Node: Schema Retrieval] Retrieved from persistent Knowledge Base (Cache).")
             
             try:
+                usage = {}
                 print_terminal("Exploratory Answer Generator")
                 answer, usage = self.nodes.exploratory_answer(user_query, full_schema)
             except Exception as e:
@@ -445,6 +463,7 @@ class TextToSQLAgent:
                 else:
                     answer = "I couldn't generate suggestions right now. Please try again."
                     self.logger.exception("Exploratory answer failed")
+                    usage = {}
             duration = perf_counter() - t0
             node_timings["10_nlg"] = duration
             log.append(f"[Node: Exploratory Answer] Schema-only suggestions generated. ({duration:.3f}s)")
@@ -466,6 +485,7 @@ class TextToSQLAgent:
                     "node_timings": node_timings,
                 })
                 self.metrics.add_query_result(True)
+                self._record_telemetry(user_query, True, overall_start, tokens_agg, node_timings, None)
             except Exception:
                 self.logger.exception("Failed to persist exploratory query")
             return answer, log, None, None
@@ -483,6 +503,7 @@ class TextToSQLAgent:
                 return msg, log, None, None
             log.append("[Node: Chart Builder] Using cached data from previous query.")
             t0 = perf_counter()
+            usage = {}
             try:
                 chart_config, usage = self.nodes.chart_config(user_query, self.last_df)
             except Exception as e:
@@ -572,6 +593,7 @@ class TextToSQLAgent:
         # Node 1: Table Selection
         print_terminal("Table Selection")
         t0 = perf_counter()
+        usage = {}
         try:
             relevant_tables, usage = self.nodes.table_selection(full_schema, actual_query)
         except Exception as e:
@@ -767,6 +789,7 @@ class TextToSQLAgent:
         print_terminal("SQL Generation")
         notify_ui("Writing SQL Query")
         t0 = perf_counter()
+        usage = {}
         try:
             sql, usage = self.nodes.sql_generation(
                 actual_query, 
@@ -861,6 +884,7 @@ class TextToSQLAgent:
                     log.append("[Node: SQL Correction] Auto-fixing...")
                     print_terminal("SQL Correction")
                     t0 = perf_counter()
+                    usage = {}
                     try:
                         sql, usage = self.nodes.sql_correction(actual_query, sql, error, reduced_schema, db_mode=self.db.mode)
                     except Exception as e:
@@ -959,6 +983,7 @@ class TextToSQLAgent:
         if isinstance(db_results, list) and len(db_results) > 10:
             sample_results = random.sample(db_results, 10 + attempt*5) # slight expansion on retries
             
+        usage = {}
         try:
             final_answer, usage = self.nodes.natural_answer(user_query, sample_results, unit_context=unit_context)
         except Exception as e:

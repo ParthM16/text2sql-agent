@@ -38,7 +38,22 @@ class LLMRouter:
             from google import genai
             project_id = os.getenv("PROJECT_ID", "").strip()
             location = os.getenv("LOCATION", "us-central1").strip()
-            api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+            
+            gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+            google_key = os.getenv("GOOGLE_API_KEY", "").strip()
+            api_key = gemini_key or google_key
+            if api_key == "your_api_key_here":
+                api_key = ""
+
+            # Prevent google-genai SDK warning:
+            # "Both GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY."
+            # and ensure duplicate env vars in memory do not cause stale key lookups:
+            if gemini_key and google_key:
+                os.environ.pop("GOOGLE_API_KEY", None)
+                os.environ["GEMINI_API_KEY"] = api_key
+            elif api_key:
+                os.environ["GEMINI_API_KEY"] = api_key
+                os.environ.pop("GOOGLE_API_KEY", None)
 
             if project_id:
                 try:
@@ -48,11 +63,11 @@ class LLMRouter:
                         location=location,
                     )
                 except Exception as e:
-                    if api_key and api_key != "your_api_key_here":
+                    if api_key:
                         self._gemini_client = genai.Client(api_key=api_key)
                     else:
                         raise e
-            elif api_key and api_key != "your_api_key_here":
+            elif api_key:
                 self._gemini_client = genai.Client(api_key=api_key)
             else:
                 self._gemini_client = None
@@ -224,8 +239,25 @@ class LLMRouter:
                     system_instruction=system_instruction
                 )
             except Exception as e:
-                logger.exception("Gemini API call failed")
-                raise LLMError("Gemini model failed. Please try again.", internal_detail=str(e))
+                # 🧠 Graceful Fallback: Switch to local Ollama if Gemini fails
+                err_detail = str(e)
+                print(f"[FALLBACK] Gemini API call failed: {err_detail}. Gracefully falling back to local Ollama (qwen2.5-coder:3b)...", flush=True)
+                logger.warning(f"Gemini API call failed ({err_detail}). Gracefully falling back to local Ollama (qwen2.5-coder:3b)...")
+                fallback_used = True
+                fallback_message = f"Gemini API unavailable ({err_detail}). Gracefully fell back to local Ollama (qwen2.5-coder:3b)."
+                provider = "ollama/qwen2.5-coder:3b"
+                try:
+                    text, input_tokens, output_tokens = self._generate_ollama(
+                        model_name="qwen2.5-coder:3b",
+                        prompt=prompt,
+                        system_instruction=system_instruction
+                    )
+                except Exception as ollama_err:
+                    logger.exception("Both Gemini and local Ollama fallback failed")
+                    raise LLMError(
+                        "Both Gemini and local Ollama fallback failed. Please check your AI configuration.",
+                        internal_detail=f"Gemini err: {e}; Ollama err: {ollama_err}"
+                    )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         total_tokens = input_tokens + output_tokens
