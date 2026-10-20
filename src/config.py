@@ -13,14 +13,19 @@ from dotenv import load_dotenv
 # Project root directory (text2sql_agent/)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Load .env once from the project root
-load_dotenv(PROJECT_ROOT / ".env", override=False)
+# Load .env with override=True so changes on disk are immediately reflected
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 
 class AppConfig:
     """Central configuration class providing typed, validated access to all app settings."""
 
     def __init__(self):
+        self.reload()
+
+    def reload(self):
+        """Reloads .env from disk and re-harmonizes keys dynamically."""
+        load_dotenv(PROJECT_ROOT / ".env", override=True)
         self._harmonize_api_keys()
 
     def _harmonize_api_keys(self):

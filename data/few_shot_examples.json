@@ -23,5 +23,10 @@
     "query": "yes",
     "sql": "SELECT 1;",
     "note": "Learned from error: Auto-Corrected execution"
+  },
+  {
+    "query": "how data or schema look like?",
+    "sql": "\nSELECT customer_code, custmer_name, customer_type\nFROM customers\n",
+    "note": "Learned from error: Auto-Corrected execution"
   }
 ]

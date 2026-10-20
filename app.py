@@ -77,6 +77,11 @@ def get_db_helper(): return DBHelper()
 def load_vector_store(backend: str = "faiss"):
     return get_vector_store(backend=backend)
 
+# ── Hot-Reload .env Configuration ────────────────────────────
+# Allows changing GEMINI_MODEL, LLM_PROVIDER, or VECTOR_BACKEND in .env
+# and having changes take effect immediately on browser refresh without restarting server.
+config.reload()
+
 # ── Session State Initialization ─────────────────────────────
 if "db_helper" not in st.session_state:
     st.session_state.db_helper = get_db_helper()
@@ -92,6 +97,24 @@ if "agent" not in st.session_state:
         st.session_state.vector_store,
         llm_provider=st.session_state.llm_provider
     )
+
+# Detect if model/backend was changed in .env and auto-sync session state
+if "configured_llm_provider" not in st.session_state:
+    st.session_state.configured_llm_provider = config.DEFAULT_LLM_PROVIDER
+elif st.session_state.configured_llm_provider != config.DEFAULT_LLM_PROVIDER:
+    st.session_state.configured_llm_provider = config.DEFAULT_LLM_PROVIDER
+    st.session_state.llm_provider = config.DEFAULT_LLM_PROVIDER
+    st.session_state.agent.nodes.model_name = config.DEFAULT_LLM_PROVIDER
+    st.session_state.agent.nodes.router.default_provider = config.DEFAULT_LLM_PROVIDER
+
+if "configured_vector_backend" not in st.session_state:
+    st.session_state.configured_vector_backend = config.DEFAULT_VECTOR_BACKEND
+elif st.session_state.configured_vector_backend != config.DEFAULT_VECTOR_BACKEND:
+    st.session_state.configured_vector_backend = config.DEFAULT_VECTOR_BACKEND
+    st.session_state.vector_backend = config.DEFAULT_VECTOR_BACKEND
+    st.session_state.vector_store = load_vector_store(config.DEFAULT_VECTOR_BACKEND)
+    st.session_state.agent.vs = st.session_state.vector_store
+
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "How can I help with your retail data today?"}]
 
