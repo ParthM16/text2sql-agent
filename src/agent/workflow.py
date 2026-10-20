@@ -21,10 +21,10 @@ from src.utils.logger import get_logger
 class TextToSQLAgent:
     """Production-grade Text-to-SQL agent with multi-node agentic workflow."""
 
-    def __init__(self, db_helper: DBHelper, vector_store=None):
+    def __init__(self, db_helper: DBHelper, vector_store=None, llm_provider: str = None):
         self.db = db_helper
         self.vs = vector_store if vector_store is not None else get_vector_store()
-        self.nodes = AgentNodes()
+        self.nodes = AgentNodes(model_name=llm_provider)
 
         #  Conversation Memory 
         # Stores the last successful query context so follow-up
