@@ -1,0 +1,177 @@
+[
+  {
+    "id": 1,
+    "question": "show me the total sales amount",
+    "gold_sql": "SELECT SUM(CASE WHEN currency = 'INR' THEN sales_amount WHEN currency = 'YEN' THEN (sales_amount * 0.5992) ELSE sales_amount END) as total_sales FROM transactions",
+    "difficulty": "easy",
+    "category": "aggregation"
+  },
+  {
+    "id": 2,
+    "question": "what is the average sales amount per transaction?",
+    "gold_sql": "SELECT AVG(sales_amount) as avg_sales FROM transactions",
+    "difficulty": "easy",
+    "category": "aggregation"
+  },
+  {
+    "id": 3,
+    "question": "how many unique customers do we have?",
+    "gold_sql": "SELECT COUNT(DISTINCT customer_code) as unique_customers FROM customers",
+    "difficulty": "easy",
+    "category": "simple"
+  },
+  {
+    "id": 4,
+    "question": "how many distinct products are in the catalog?",
+    "gold_sql": "SELECT COUNT(DISTINCT product_code) as total_products FROM products",
+    "difficulty": "easy",
+    "category": "simple"
+  },
+  {
+    "id": 5,
+    "question": "what is the total sales quantity across all orders?",
+    "gold_sql": "SELECT SUM(sales_qty) FROM transactions",
+    "difficulty": "easy",
+    "category": "aggregation"
+  },
+  {
+    "id": 6,
+    "question": "what is the total sales quantity for product Prod001?",
+    "gold_sql": "SELECT SUM(sales_qty) as total_qty FROM transactions WHERE product_code = 'Prod001'",
+    "difficulty": "easy",
+    "category": "filtering"
+  },
+  {
+    "id": 7,
+    "question": "total sales amount for market code Mark001",
+    "gold_sql": "SELECT SUM(sales_amount) as total_sales FROM transactions WHERE market_code = 'Mark001'",
+    "difficulty": "easy",
+    "category": "filtering"
+  },
+  {
+    "id": 8,
+    "question": "how many transactions were made in USD currency?",
+    "gold_sql": "SELECT COUNT(*) as count_usd FROM transactions WHERE currency = 'USD'",
+    "difficulty": "easy",
+    "category": "filtering"
+  },
+  {
+    "id": 9,
+    "question": "show total sales where profit margin is greater than zero",
+    "gold_sql": "SELECT SUM(sales_amount) as profitable_sales FROM transactions WHERE profit_margin > 0",
+    "difficulty": "medium",
+    "category": "filtering"
+  },
+  {
+    "id": 10,
+    "question": "total transactions with negative profit margin percentage",
+    "gold_sql": "SELECT COUNT(*) as loss_transactions FROM transactions WHERE profit_margin_percentage < 0",
+    "difficulty": "medium",
+    "category": "filtering"
+  },
+  {
+    "id": 11,
+    "question": "show me the total sales amount year wise",
+    "gold_sql": "SELECT YEAR(order_date) AS sales_year, SUM(sales_amount) AS total_sales FROM transactions GROUP BY YEAR(order_date) ORDER BY sales_year",
+    "difficulty": "medium",
+    "category": "date_grouping"
+  },
+  {
+    "id": 12,
+    "question": "total sales quantity by year",
+    "gold_sql": "SELECT YEAR(order_date) AS order_year, SUM(sales_qty) AS total_qty FROM transactions GROUP BY YEAR(order_date) ORDER BY order_year",
+    "difficulty": "medium",
+    "category": "date_grouping"
+  },
+  {
+    "id": 13,
+    "question": "monthly sales amount for the year 2019",
+    "gold_sql": "SELECT MONTH(order_date) AS order_month, SUM(sales_amount) AS monthly_sales FROM transactions WHERE YEAR(order_date) = 2019 GROUP BY MONTH(order_date) ORDER BY order_month",
+    "difficulty": "medium",
+    "category": "date_grouping"
+  },
+  {
+    "id": 14,
+    "question": "total profit margin by year",
+    "gold_sql": "SELECT YEAR(order_date) AS sales_year, SUM(profit_margin) AS total_profit FROM transactions GROUP BY YEAR(order_date) ORDER BY sales_year",
+    "difficulty": "medium",
+    "category": "date_grouping"
+  },
+  {
+    "id": 15,
+    "question": "total sales amount by customer name",
+    "gold_sql": "SELECT c.custmer_name, SUM(t.sales_amount) AS total_sales FROM transactions t JOIN customers c ON t.customer_code = c.customer_code GROUP BY c.custmer_name ORDER BY total_sales DESC",
+    "difficulty": "medium",
+    "category": "multi_table_join"
+  },
+  {
+    "id": 16,
+    "question": "total sales amount by market zone",
+    "gold_sql": "SELECT m.zone, SUM(t.sales_amount) AS zone_sales FROM transactions t JOIN markets m ON t.market_code = m.markets_code GROUP BY m.zone ORDER BY zone_sales DESC",
+    "difficulty": "medium",
+    "category": "multi_table_join"
+  },
+  {
+    "id": 17,
+    "question": "sales amount by customer type",
+    "gold_sql": "SELECT c.customer_type, SUM(t.sales_amount) AS type_sales FROM transactions t JOIN customers c ON t.customer_code = c.customer_code GROUP BY c.customer_type",
+    "difficulty": "medium",
+    "category": "multi_table_join"
+  },
+  {
+    "id": 18,
+    "question": "total sales by product type",
+    "gold_sql": "SELECT p.product_type, SUM(t.sales_amount) AS total_sales FROM transactions t JOIN products p ON t.product_code = p.product_code GROUP BY p.product_type",
+    "difficulty": "medium",
+    "category": "multi_table_join"
+  },
+  {
+    "id": 19,
+    "question": "total sales and profit by market name",
+    "gold_sql": "SELECT m.markets_name, SUM(t.sales_amount) AS total_sales, SUM(t.profit_margin) AS total_profit FROM transactions t JOIN markets m ON t.market_code = m.markets_code GROUP BY m.markets_name ORDER BY total_sales DESC",
+    "difficulty": "medium",
+    "category": "multi_table_join"
+  },
+  {
+    "id": 20,
+    "question": "3-table join: total sales by market zone and customer type",
+    "gold_sql": "SELECT m.zone, c.customer_type, SUM(CASE WHEN t.currency = 'INR' THEN t.sales_amount WHEN t.currency = 'YEN' THEN (t.sales_amount * 0.5992) ELSE t.sales_amount END) AS total_sales FROM transactions t JOIN markets m ON t.market_code = m.markets_code JOIN customers c ON t.customer_code = c.customer_code GROUP BY m.zone, c.customer_type ORDER BY total_sales DESC",
+    "difficulty": "hard",
+    "category": "multi_table_join"
+  },
+  {
+    "id": 21,
+    "question": "what is the profit margin contribution for market code Mark001?",
+    "gold_sql": "SELECT SUM((sales_amount - cost_price) * sales_qty) AS profit_contrib FROM transactions WHERE market_code = 'Mark001'",
+    "difficulty": "medium",
+    "category": "domain_logic"
+  },
+  {
+    "id": 22,
+    "question": "total normalized sales in INR converting USD transactions using fixed factor 83",
+    "gold_sql": "SELECT SUM(CASE WHEN currency = 'USD' THEN sales_amount * 83.0 ELSE sales_amount END) AS normalized_sales_inr FROM transactions",
+    "difficulty": "hard",
+    "category": "currency_mixed"
+  },
+  {
+    "id": 23,
+    "question": "total revenue and cost by year",
+    "gold_sql": "SELECT YEAR(order_date) as sales_year, SUM(sales_amount) as total_revenue, SUM(cost_price * sales_qty) as total_cost FROM transactions GROUP BY YEAR(order_date) ORDER BY sales_year",
+    "difficulty": "medium",
+    "category": "domain_logic"
+  },
+  {
+    "id": 24,
+    "question": "unique vs returning customers year-wise",
+    "gold_sql": "WITH CustomerFirstYear AS (SELECT customer_code, MIN(YEAR(order_date)) as first_year FROM transactions GROUP BY customer_code), YearlyCustomers AS (SELECT YEAR(t.order_date) as order_year, t.customer_code, MAX(cfy.first_year) as first_year FROM transactions t JOIN CustomerFirstYear cfy ON t.customer_code = cfy.customer_code GROUP BY YEAR(t.order_date), t.customer_code) SELECT order_year, SUM(CASE WHEN first_year = order_year THEN 1 ELSE 0 END) as unique_customers, SUM(CASE WHEN first_year < order_year THEN 1 ELSE 0 END) as returning_customers FROM YearlyCustomers GROUP BY order_year ORDER BY order_year",
+    "difficulty": "hard",
+    "category": "cte_window"
+  },
+  {
+    "id": 25,
+    "question": "top 5 customers by total sales amount",
+    "gold_sql": "SELECT TOP 5 c.custmer_name, SUM(CASE WHEN t.currency = 'INR' THEN t.sales_amount WHEN t.currency = 'YEN' THEN (t.sales_amount * 0.5992) ELSE t.sales_amount END) AS total_sales_amount FROM transactions t JOIN customers c ON t.customer_code = c.customer_code GROUP BY c.custmer_name ORDER BY total_sales_amount DESC",
+    "difficulty": "medium",
+    "category": "cte_window"
+  }
+]
