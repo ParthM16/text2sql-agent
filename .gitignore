@@ -53,8 +53,17 @@ TESTING_ENTERPRISE_FUNNEL.md
 Execution analysis pics/
 node_architecture_analysis.md
 
+# ─── Benchmark & Test Runs (Local Only) ──────────
+data/*benchmark*.json
+data/*benchmark*.csv
+data/values_only_eval_results.json
+data/strict_single_model_results.json
+data/three_repeats_benchmark_results.json
+data/ollama_25_benchmark_results.json
+
 # ─── Exports & Scratch ──────────────────────────
 export/
 scratch/
 tests/
 export_project.py
+

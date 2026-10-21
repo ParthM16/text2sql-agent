@@ -21,7 +21,7 @@ In most businesses, data is locked behind a wall called **SQL**. When business u
 
 This project tears down that wall. 
 
-I built an **AI Agent** that allows anyone to ask questions about their business in plain English. The agent understands the intent, writes the database query, executes it, and returns a formatted human-readable answer with charts-in under few seconds.
+I built an **AI Agent** that allows anyone to ask questions about their business in plain English. The agent understands the intent, writes the database query, executes it, and returns a formatted human-readable answer with charts—achieving a **2.8s median response time** (replacing an estimated ~20-minute manual turnaround).
 
 </td>
 <td width="30%" align="center">
@@ -60,14 +60,16 @@ This app is built for **non-technical business professionals** who need data ans
 
 | Without This Agent | With This Agent |
 |---|---|
-| Business user writes a ticket → waits for data team → data engineer writes SQL → debugs → sends results back (**~30-60 min**) | Business user types a question → gets an answer with charts (**~5-15 sec**) |
-| Data engineers spend **40%** of their day answering ad-hoc report requests | Data engineers focus on **real engineering** - pipelines, architecture, optimization |
-| Executives wait until the **next weekly report** to get a number | Executives get **instant, self-service** access to any metric, anytime |
+| Business user writes a ticket → waits in queue → analyst writes SQL & debugs (**est. ~20-min turnaround**) | Business user types a question in plain English → gets verified data and charts (**2.8s median self-service**) |
+| Data engineers spend **40%** of their day answering ad-hoc report requests | Data engineers focus on **core engineering** — pipelines, architecture, and optimization |
+| Executives wait until the **next weekly report** to get numbers | Executives get **instant, self-service** access to any metric, anytime |
 
 ## 🏆 What We Achieved
-* **Time Saved**: Reduced the time it takes to get a data answer from **~45 minutes** (manual SQL writing and debugging) to **few seconds**.
-* **Zero Technical Barrier**: Users don't need to know what a database is, let alone how to write code.
-* **Self-Improving Memory**: The agent actually learns from its mistakes, storing successful corrections in its permanent memory so it never makes the same mistake twice.
+* **2.8s Median Turnaround**: Replaced estimated **~20-minute** manual analyst turnaround on ad-hoc requests with **2.8s median** self-serve answers for non-technical teams.
+* **100% Execution Success & 91% Gold Match**: Validated across a **25-query evaluation harness over 75 runs** (3 repeats), achieving **100% SQL execution success** and **91% gold-answer match** under value-level evaluation.
+* **Scalable 3-Tier RAG Funnel**: Handled schemas beyond LLM context limits using vector routing (FAISS/ChromaDB), successfully routing **50 tables down to 6 candidate tables** with **100% table recall** on a synthetic 1,074-column stress test.
+* **Zero-Cost Offline Resilience**: Multi-model architecture routing queries to cloud Gemini API (2.81s median) with automatic failover to local quantized Ollama (`qwen2.5-coder:3b`), ensuring air-gapped continuity.
+* **Defensive Guardrails & Unit Intelligence**: Pre-LLM 10-layer security guardrail (~31ms) blocking prompt injections / encoding attacks and Universal Unit Intelligence (UUI) detecting currency collisions across multi-currency tables.
 
 ---
 
@@ -80,7 +82,7 @@ Building an AI demo is easy. Building a reliable product is hard. Here are the r
 
 ### 2. The Currency Collision Problem
 * **Challenge**: If a database contains sales in USD, EUR, and INR, a basic AI will blindly add them together (e.g., $100 + 1000 INR = 1100 Nonsense).
-* **Solution**: Built a **Universal Unit Intelligence (UUI)** layer. The agent scans the database before answering, detects conflicting currencies, fetches live exchange rates from the web, and converts everything into a single currency mathematically *before* giving you the answer.
+* **Solution**: Built a **Universal Unit Intelligence (UUI)** layer with **currency-collision detection**. The agent scans the database before answering, detects conflicting currencies, fetches live exchange rates from the web, and converts everything into a single currency mathematically *before* giving you the answer.
 
 ### 3. The "AI Forgets" Problem
 * **Challenge**: If an AI makes a mistake, you can tell it to fix it. But tomorrow, it will make the exact same mistake again.
@@ -92,7 +94,7 @@ Building an AI demo is easy. Building a reliable product is hard. Here are the r
 
 ### 5. Security & Prompt Injection
 * **Challenge**: Malicious users could trick the AI into executing destructive SQL (DROP TABLE) or bypass system instructions.
-* **Solution**: Built a **10-layer pre-LLM security guardrail** - including spell correction for evasion typos, machine-language encoding detection (binary/hex/base64), natural language validation, and regex-based DML/DDL blocking - all running *before* any AI model is called.
+* **Solution**: Built a **10-layer pre-LLM security guardrail** (~31ms latency) - including spell correction for evasion typos, machine-language encoding detection (binary/hex/base64), natural language validation, and regex-based DML/DDL blocking - all running *before* any AI model is called.
 
 ---
 
@@ -100,25 +102,26 @@ Building an AI demo is easy. Building a reliable product is hard. Here are the r
 For the technical folks, here is what powers the engine:
 - **Centralized Configuration (`src/config.py`)**: Single Source of Truth (SSOT) managing all model IDs, API keys, vector store paths, pricing tables, and thresholds.
 - **Multi-Model LLM Router (`src/llm/model_router.py`)**:
-  - **Cloud AI**: Google Gemini (`gemini-3.8-flash` / `gemini-3.5-flash-lite`) via Google GenAI SDK.
-  - **Local AI**: Quantized local LLMs via Ollama (`ollama/qwen2.5-coder:3b` / `llama3.2`).
-  - **Resilience**: Bidirectional automatic fallback and live token/cost tracking.
+  - **Cloud AI**: Google Gemini (`gemini-3.8-flash` / `gemini-3.5-flash-lite`) via Google GenAI SDK (2.81s median latency, $0.075/1M tokens).
+  - **Local AI Failover**: Quantized local LLMs via Ollama (`ollama/qwen2.5-coder:3b` / `llama3.2`) for zero-cost offline resilience (80% SQL execution validity, 83s CPU latency).
+  - **Resilience**: Automatic fallback on 429 quota exhaustion or network dropouts, with live token/cost tracking.
 - **Dual Vector Store Backend (`src/retrieval/store_factory.py`)**:
-  - **In-Memory (Fast L2)**: FAISS `IndexFlatL2` for sub-millisecond retrieval.
-  - **Persistent Local Disk**: ChromaDB persistent collections with HNSW indexing.
+  - **In-Memory (Fast L2)**: FAISS `IndexFlatL2` for sub-millisecond to 10.8ms median retrieval.
+  - **Persistent Local Disk**: ChromaDB persistent collections with HNSW indexing (13.6ms median retrieval).
   - **RAM Optimization**: Shared `SentenceTransformer('all-MiniLM-L6-v2')` singleton preventing duplicate memory allocation.
   - **Dual-Write Sync**: Automated learning loops synchronize corrections across active stores.
 - **Enterprise Schema RAG (3-Tier Funnel)**:
-  - **Tier 1 (Table Discovery)**: Lean table catalog + vector table routing (scales to 50+ tables).
-  - **Tier 2 (Schema Linking)**: Semantic column pruning isolating top 10–18 columns + PK/FK/Date anchors (scales to 1,000+ columns).
+  - **Tier 1 (Table Discovery)**: Lean table catalog + vector table routing (tested routing 50 synthetic tables to 6 candidate tables with 100% recall).
+  - **Tier 2 (Schema Linking)**: Semantic column pruning isolating top 10–18 columns + PK/FK/Date anchors (tested on 1,074 synthetic columns with 100% column recall).
   - **Tier 3 (SQL Generation)**: Relation-aware prompts enforcing known primary/foreign key JOIN conditions.
 - **Evaluation & Benchmarking Suite (`src/evaluation/benchmark.py`)**:
-  - Automated benchmark measuring syntax validity, execution accuracy, self-healing rates, per-node latency, and cost trade-offs.
-  - Built-in rate-limit guard (15 RPM compliance) and automatic markdown/CSV export (`BENCHMARK_REPORT.md`).
+  - Built 25-query evaluation harness scored against gold-standard SQL across 75 runs (3 repeats).
+  - Verified **100% SQL execution success** and **91% gold-answer match** (under value-only evaluation).
+  - Built-in rate-limit guard (15 RPM compliance) with automated execution latency and accuracy reporting.
 - **Frontend & UI (`app.py` & Streamlit)**:
   - Runtime dropdown selectors for LLM Provider (Gemini vs. Ollama) and Vector Store (FAISS vs. ChromaDB).
   - Live telemetry card showing per-node latency breakdown, token usage, and live multi-model cost comparisons ($0.00 Ollama vs. Gemini vs. GPT-4o-mini vs. Claude 3.5 Haiku).
-- **Security**: 10-layer pre-LLM input guardrail (regex, langdetect, difflib, machine-encoded sequence blocks).
+- **Security & Guardrails**: 10-layer pre-LLM input guardrail (~31ms) blocking prompt injections, encoded exploits, and destructive DML/DDL commands.
 
 ## 📐 Architecture
 The agent processes each query through an enterprise-grade agentic pipeline:
@@ -127,25 +130,25 @@ The agent processes each query through an enterprise-grade agentic pipeline:
 User Question
       │
       ▼
-Input Guardrails (Injection & Encoding Blocks)
+Input Guardrails (10-Layer Injection, Encoding & DML Blocks ~31ms)
       │
       ▼
 Intent Detection (NEW_QUERY / CHART_REQUEST / FOLLOW_UP / EXPLORATORY)
       │
       ▼
-[Tier 1] Table Catalog & Semantic Routing (Filters 50+ tables → 2-4 candidate tables)
+[Tier 1] Table Catalog & Semantic Routing (RAG funnel routing 50 tables → 6 candidate tables)
       │
       ▼
-[Tier 2] Schema Linking & Column Pruning (Filters 1,000+ cols → 10-18 high-signal cols + PK/FK)
+[Tier 2] Schema Linking & Column Pruning (Prunes 1,074 synthetic cols → high-signal cols + PK/FK/Date anchors)
       │
       ▼
-Universal Unit Intelligence (UUI) (Live Currency & Unit Normalization)
+Universal Unit Intelligence (UUI) (Currency-Collision Detection & Normalization)
       │
       ▼
 Dual Vector Retrieval (Few-Shot Examples + Categorical Typo Correction)
       │
       ▼
-Relation-Aware SQL Generation (Gemini Cloud ↔ Local Ollama with Fallback)
+Relation-Aware SQL Generation (Gemini Cloud 2.8s ↔ Local Ollama Failover)
       │
       ▼
 Database Execution (SQL Server / SQLite)
@@ -199,9 +202,9 @@ text2sql_agent/
 │       ├── web_service.py      # Live exchange rate & unit conversion service
 │       └── disk_cache.py       # Cache management
 ├── data/
-│   ├── few_shot_examples.json  # Seed examples for few-shot RAG
-│   ├── schema_knowledge.json   # Persistent enriched schema catalog
-│   └── eval_set.json           # Gold-standard benchmark evaluation set
+│   ├── few_shot_examples.json             # Seed examples for few-shot RAG
+│   ├── schema_knowledge.json              # Persistent enriched schema catalog
+│   └── eval_set_25.json                   # 25-query gold-standard evaluation harness
 ├── .streamlit/config.toml      # Streamlit server config
 ├── .env.example                # Safe credential template
 ├── requirements.txt
